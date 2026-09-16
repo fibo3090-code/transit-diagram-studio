@@ -13,7 +13,7 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 35 domain checks (pure logic, no browser) |
+| `npm test` | 54 domain checks (pure logic, no browser) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
 
@@ -75,13 +75,43 @@ because those are junctions. Bridge width is adjustable, and 0 turns it off.
 **Out-of-station interchanges.** Select two stations and link them. They draw as a dashed
 connector with an optional note ("5 min walk"), and journeys can use them.
 
-**Transport modes are editable.** Add your own — monorail, funicular, whatever — with its
-own thickness, dash pattern, stop symbol and draw order. Built-in modes are editable too.
+**Transport modes are editable.** Six ship as defaults — Metro, Rail, Tram, Bus, Ferry and
+Cable — each with its own colour, thickness, dash pattern, stop symbol and draw order. All
+six are editable, and you can add your own: monorail, funicular, whatever. Draw order is
+part of the mode, so ferries sit under trams and rail over metro without per-line fiddling.
 
 **Journey planner.** Pick two stops and get the route with its legs and changes,
 highlighted on the map. It searches over (station, line) states rather than plain
 stations, because the cost of a journey is not only distance but how many times you have
 to change — a plain station graph cannot tell "stay aboard" from "get off and wait".
+
+**Style presets.** Four ship: **London** (rounded corners, generous spacing), **Tokyo
+dense** (thin strokes and small type for busy networks), **High contrast** (heavy strokes
+on near-black, for projection) and **Print safe** (mitred corners, serif type, tuned for
+paper). A preset sets corridor spacing, stroke scale, stop radius, crossing clearances,
+type and colours in one go; everything it sets stays editable afterwards.
+
+**CSV in and out.** Two shapes, both of them things a spreadsheet or a game mod can
+emit without ceremony:
+
+```
+name, x, y                              # stations
+line, stop                              # lines, one row per stop, in order
+line, stop, mode, colour, branch        # the last three optional
+```
+
+The header row decides which is which. Station names match case-insensitively against
+what already exists, so importing lines *after* stations links them up instead of
+creating duplicates. An unreadable file reports what it expected rather than throwing.
+Both shapes write back out as `stations.csv` and `lines.csv`, so a project can make a
+round trip through a spreadsheet.
+
+**The network checker** looks for the mistakes that are invisible at a glance: unnamed
+stations and lines, duplicate names, stations on no line, two stations at the same
+position, lines with fewer than two stops, branches with one stop, references to deleted
+stations, walking links between stations already sharing a line, and suspiciously long
+walks. Issues are graded error / warning / info — most are worth knowing rather than
+fixing.
 
 ## Snapping
 
@@ -122,9 +152,9 @@ the lot.
 | <kbd>Alt</kbd> *(held)* | Suspend snapping |
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> | Jump to a station or line, or run a command |
 | <kbd>?</kbd> | Keyboard shortcut reference |
-| <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | Undo / redo |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | Undo / redo (<kbd>Ctrl</kbd>+<kbd>Y</kbd> also redoes) |
 | Arrows, <kbd>Shift</kbd>+arrows | Nudge 1px / 10px |
-| <kbd>Delete</kbd> | Delete selection |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete selected stations, or selected terrain |
 | <kbd>Esc</kbd> | Cancel the current trace, then the selection |
 
 With the bend tool: click a segment to add a corner, <kbd>Alt</kbd>+click a segment to
@@ -139,12 +169,16 @@ src/
     geometry.ts    vectors, octilinear helpers, parallel offsetting, RDP simplify
     network.ts     everything derived from the graph: corridors, offsets, termini
     snapping.ts    the snap engine
+    crossings.ts   where one line passes over another, and the bridge it gets
     symbols.ts     which symbol a station gets, including interchange bars
     labels.ts      collision-avoiding label placement
     validate.ts    the network checker
     csv.ts         CSV import and export
     routing.ts     journey planning across the network
     migrate.ts     bringing older saved projects up to date
+    defaults.ts    built-in modes, style presets, a new empty project
+    ids.ts         branded id generation
+    sample.ts      the example network on the front page
   store/         Zustand + Immer, patch-based history
   persistence/   IndexedDB (projects + image blobs), file save/open, image import
   render/        one SVG surface for both views, plus its layers
