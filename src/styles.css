@@ -63,6 +63,16 @@
   --color-amber-500: #f0b440;
 }
 
+/* Tailwind compiles `bg-white` and `text-white` to literal colours rather than to
+   var(--color-white), so unlike every slate utility they do not follow the ramp
+   above. `!important` because Tailwind's utilities sit in a cascade layer whose
+   ordering against these depends on where the bundler places the import -- and a
+   half-inverted theme is worse than none. */
+[data-theme="dark"] .bg-white { background-color: #14161b !important; }
+[data-theme="dark"] .bg-white\/95 { background-color: rgb(20 22 27 / 0.95) !important; }
+[data-theme="dark"] .text-white { color: #14161b !important; }
+[data-theme="dark"] .border-white { border-color: #14161b !important; }
+
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; }
 

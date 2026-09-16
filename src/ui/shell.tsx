@@ -68,6 +68,19 @@ function readPrefs(): UiPrefs {
 }
 
 /**
+ * Stamp the stored theme and density onto the document.
+ *
+ * Called once from the entry point so the whole app is themed, not just the editor,
+ * and so nothing paints in the wrong palette first.
+ */
+export function applyStoredTheme() {
+  const prefs = readPrefs()
+  const root = document.documentElement
+  root.dataset.theme = prefs.theme
+  root.dataset.density = prefs.density
+}
+
+/**
  * Editor preferences, persisted per browser.
  *
  * Deliberately NOT part of the project: panel widths and a dark theme belong to the
