@@ -1,7 +1,9 @@
 import type {
+  AssetId,
   BranchId,
   ImageId,
   LineId,
+  PlacementId,
   ProjectId,
   StationId,
   TerrainId,
@@ -28,4 +30,6 @@ export const newProjectId = () => makeId('prj') as ProjectId
 // 'xf', not 'tr' — terrain already owns that prefix, and two id families sharing
 // one prefix makes ids ambiguous the moment anything keys off them.
 export const newTransferId = () => makeId('xf') as TransferId
+export const newAssetId = () => makeId('as') as AssetId
+export const newPlacementId = () => makeId('pl') as PlacementId
 export const newBlobKey = () => makeId('blob')

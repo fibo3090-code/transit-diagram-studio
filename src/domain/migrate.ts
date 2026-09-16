@@ -17,7 +17,7 @@ import {
   defaultStyle,
 } from './defaults'
 import { newBranchId } from './ids'
-import type { ModeStyle, Project, Station, Transfer, Vec2 } from './types'
+import type { ModeStyle, Project, Station, Terrain, Transfer, Vec2 } from './types'
 import { PROJECT_VERSION } from './types'
 
 const vec = (v: Partial<Vec2> | undefined, fallback: Vec2): Vec2 => ({
@@ -82,13 +82,25 @@ export function normalizeProject(raw: Project): Project {
         angle: s.label?.angle ?? 0,
         hidden: s.label?.hidden ?? false,
       },
+      // v2 -> v3. Absent is not the same as empty for `symbol`: a missing value has to
+      // mean "derive it from the graph", which is what every v2 project did.
+      badges: s.badges ?? [],
+      status: s.status ?? 'open',
+      symbol: s.symbol ?? { kind: 'auto' },
     }
   })
 
   const lines = (p.lines ?? []).map((l) => {
     const branches = l.branches?.length
-      ? l.branches.map((b) => ({ ...b, stops: b.stops ?? [] }))
-      : [{ id: newBranchId(), stops: [] }]
+      ? l.branches.map((b) => ({
+          ...b,
+          stops: b.stops ?? [],
+          // v2 -> v3. Every existing branch called at every station it listed and could
+          // be ridden both ways, so these are the values that preserve behaviour.
+          passes: b.passes ?? [],
+          direction: b.direction ?? ('both' as const),
+        }))
+      : [{ id: newBranchId(), stops: [], passes: [], direction: 'both' as const }]
 
     const bends: Project['lines'][number]['bends'] = {}
     for (const [key, list] of Object.entries(l.bends ?? {})) {
@@ -110,7 +122,7 @@ export function normalizeProject(raw: Project): Project {
     }
   })
 
-  const terrain = (p.terrain ?? []).map((t) => {
+  const terrain: Terrain[] = (p.terrain ?? []).map((t) => {
     const geo = t.geo ?? []
     return {
       ...t,
@@ -119,6 +131,12 @@ export function normalizeProject(raw: Project): Project {
       name: t.name ?? '',
       closed: t.closed ?? false,
       hidden: t.hidden ?? false,
+      // v2 -> v3. `solid` is how every kind was painted before fills existed.
+      holes: (t.holes ?? []).map((h) => ({
+        geo: h.geo ?? [],
+        schematic: h.schematic?.length ? h.schematic : (h.geo ?? []).map((q) => ({ ...q })),
+      })),
+      fill: t.fill ?? 'solid',
     }
   })
 
@@ -132,15 +150,43 @@ export function normalizeProject(raw: Project): Project {
     placedBy: i.placedBy ?? 'manual',
   }))
 
+  // Same reasoning as placements: a symbol referencing a deleted asset would render
+  // nothing at all, so fall back to the derived mark rather than losing the station.
+  const assetIdsForSymbols = new Set((p.assets ?? []).map((a) => a.id))
+  for (const s of stations) {
+    if (s.symbol.kind === 'asset' && !assetIdsForSymbols.has(s.symbol.assetId)) {
+      s.symbol = { kind: 'auto' }
+    }
+  }
+
   const known = new Set(stations.map((s) => s.id))
   // A link to a station that no longer exists would draw a stroke into nowhere.
   const transfers: Transfer[] = (p.transfers ?? []).filter(
     (t) => known.has(t.a) && known.has(t.b) && t.a !== t.b,
   ).map((t) => ({ ...t, note: t.note ?? '', hidden: t.hidden ?? false }))
 
+  const assets = (p.assets ?? []).map((a) => ({ ...a, source: a.source ?? 'import' }))
+  const assetIds = new Set(assets.map((a) => a.id))
+  // A placement whose asset is gone would draw nothing and be unselectable -- an
+  // invisible object you cannot delete. Drop it, as transfers to dead stations are.
+  const placements = (p.placements ?? [])
+    .filter((pl) => pl.what?.kind !== 'asset' || assetIds.has(pl.what.assetId))
+    .map((pl) => ({
+      ...pl,
+      geo: vec(pl.geo, { x: 0, y: 0 }),
+      schematic: vec(pl.schematic, vec(pl.geo, { x: 0, y: 0 })),
+      scale: typeof pl.scale === 'number' ? pl.scale : 1,
+      angle: pl.angle ?? 0,
+      opacity: typeof pl.opacity === 'number' ? pl.opacity : 1,
+      locked: pl.locked ?? false,
+      hidden: pl.hidden ?? false,
+    }))
+
   return {
     ...p,
     version: PROJECT_VERSION,
+    assets,
+    placements,
     transfers,
     name: p.name ?? 'Untitled network',
     createdAt: p.createdAt ?? Date.now(),

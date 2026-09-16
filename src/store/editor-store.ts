@@ -14,7 +14,7 @@
 import { applyPatches, enablePatches, produce, produceWithPatches, type Patch } from 'immer'
 import { create } from 'zustand'
 
-import { nextUnusedColor, presetById } from '../domain/defaults'
+import { makeBranch, makeStation, makeTerrain, nextUnusedColor, presetById } from '../domain/defaults'
 import { add, dist, octilinearizeRun, simplify, sub } from '../domain/geometry'
 import {
   newBranchId,
@@ -503,14 +503,10 @@ export const useEditor = create<EditorState>((set, get) => {
 
     addStation: (pos, space, name = '') => {
       const id = newStationId()
-      const station: Station = {
-        id,
-        name,
-        geo: space === 'geo' ? { ...pos } : { ...pos },
-        schematic: space === 'schematic' ? { ...pos } : { ...pos },
-        modes: [],
-        label: { anchor: 'auto', offset: { x: 0, y: 0 }, pinned: false, angle: 0, hidden: false },
-      }
+      // Both spaces start at the drawn position; only the active one is authoritative
+      // until the station is moved in the other.
+      void space
+      const station: Station = makeStation(id, name, pos)
       get().mutate('Add station', (d) => { d.stations.push(station) })
       return id
     },
@@ -612,7 +608,7 @@ export const useEditor = create<EditorState>((set, get) => {
         name: name ?? `Line ${(get().project?.lines.length ?? 0) + 1}`,
         mode,
         color: nextUnusedColor(used),
-        branches: [{ id: branchId, stops: [] }],
+        branches: [makeBranch(branchId)],
         bends: {},
         hidden: false,
       }
@@ -682,7 +678,7 @@ export const useEditor = create<EditorState>((set, get) => {
         ok = true
         // Seeding from a junction stop is what makes a Y: the new branch starts at an
         // existing station on the line rather than floating free.
-        l.branches.push({ id: branchId, name, stops: fromStop ? [fromStop] : [] })
+        l.branches.push(makeBranch(branchId, fromStop ? [fromStop] : [], { name }))
       })
       if (!ok) return null
       set({ activeLineId: lineId, activeBranchId: branchId })
@@ -694,7 +690,7 @@ export const useEditor = create<EditorState>((set, get) => {
         const l = findLine(d, lineId)
         if (!l) return
         l.branches = l.branches.filter((b) => b.id !== branchId)
-        if (l.branches.length === 0) l.branches.push({ id: newBranchId(), stops: [] })
+        if (l.branches.length === 0) l.branches.push(makeBranch(newBranchId()))
       }),
 
     appendStop: (lineId, branchId, stationId) =>
@@ -732,20 +728,7 @@ export const useEditor = create<EditorState>((set, get) => {
         const b = l?.branches.find((x) => x.id === branchId)
         if (!l || !b) return
         ok = true
-        d.stations.push({
-          id,
-          name: '',
-          geo: { ...pos },
-          schematic: { ...pos },
-          modes: [l.mode],
-          label: {
-            anchor: 'auto',
-            offset: { x: 0, y: 0 },
-            pinned: false,
-            angle: 0,
-            hidden: false,
-          },
-        })
+        d.stations.push(makeStation(id, '', pos, { modes: [l.mode] }))
         b.stops.splice(index + 1, 0, id)
         // The old segment's bends described a route that no longer exists once a
         // station splits it, so they are dropped rather than left pointing nowhere.
@@ -848,15 +831,12 @@ export const useEditor = create<EditorState>((set, get) => {
     addTerrain: (kind, points, space, name = '', closed = false) => {
       const id = newTerrainId()
       const pts = points.map((p) => ({ ...p }))
-      const t: Terrain = {
-        id,
-        kind,
+      const t: Terrain = makeTerrain(id, kind, {
         name,
         geo: pts.map((p) => ({ ...p })),
         schematic: pts.map((p) => ({ ...p })),
         closed,
-        hidden: false,
-      }
+      })
       // Only the space it was drawn in is authoritative; the other starts as a copy.
       void space
       get().mutate('Add terrain', (d) => { d.terrain.push(t) })

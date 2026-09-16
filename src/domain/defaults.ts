@@ -1,9 +1,17 @@
 import { newProjectId } from './ids'
 import type {
+  Branch,
+  BranchId,
   ModeStyle,
   Project,
   SnapSettings,
+  Station,
+  StationId,
   StyleSettings,
+  Terrain,
+  TerrainId,
+  TerrainKind,
+  Vec2,
   ViewSettings,
 } from './types'
 import { PROJECT_VERSION } from './types'
@@ -124,6 +132,9 @@ export const STYLE_PRESETS: StylePreset[] = [
       background: '#FFFFFF',
       foreground: '#111827',
       cornerRadius: 14,
+      badgeShape: 'roundel',
+      secondaryNameScale: 0.78,
+      hitRadius: 14,
     },
   },
   {
@@ -141,6 +152,9 @@ export const STYLE_PRESETS: StylePreset[] = [
       background: '#FFFFFF',
       foreground: '#1A1A1A',
       cornerRadius: 6,
+      badgeShape: 'circle',
+      secondaryNameScale: 0.74,
+      hitRadius: 11,
     },
   },
   {
@@ -158,6 +172,9 @@ export const STYLE_PRESETS: StylePreset[] = [
       background: '#0B0F14',
       foreground: '#F2F5F9',
       cornerRadius: 10,
+      badgeShape: 'circle',
+      secondaryNameScale: 0.80,
+      hitRadius: 16,
     },
   },
   {
@@ -175,6 +192,9 @@ export const STYLE_PRESETS: StylePreset[] = [
       background: '#FFFFFF',
       foreground: '#000000',
       cornerRadius: 0,
+      badgeShape: 'roundel',
+      secondaryNameScale: 0.78,
+      hitRadius: 15,
     },
   },
 ]
@@ -205,11 +225,67 @@ export const DEFAULT_VIEW: ViewSettings = {
   showGrid: true,
   autoLabels: true,
   showLineBadges: true,
+  showZones: true,
+  showBadges: true,
+  showPlacements: true,
+  showDirection: true,
 }
 
 export function defaultStyle(presetId = 'london'): StyleSettings {
   const p = presetById(presetId)
   return { presetId: p.id, ...p.style }
+}
+
+// ---------------------------------------------------------------------------
+// Factories
+// ---------------------------------------------------------------------------
+//
+// Every station, branch and terrain shape is built here and nowhere else. Before these
+// existed each call site spelled out its own literal, so adding a field meant finding
+// all of them -- and any one that was missed produced an object that type-checked at
+// the boundary but was missing a value the renderer expected.
+
+export function makeStation(
+  id: StationId,
+  name: string,
+  at: Vec2,
+  extra: Partial<Station> = {},
+): Station {
+  return {
+    id,
+    name,
+    geo: { ...at },
+    schematic: { ...at },
+    modes: [],
+    label: { anchor: 'auto', offset: { x: 0, y: 0 }, pinned: false, angle: 0, hidden: false },
+    badges: [],
+    status: 'open',
+    symbol: { kind: 'auto' },
+    ...extra,
+  }
+}
+
+export function makeBranch(id: BranchId, stops: StationId[] = [], extra: Partial<Branch> = {}): Branch {
+  return { id, stops, passes: [], direction: 'both', ...extra }
+}
+
+export function makeTerrain(
+  id: TerrainId,
+  kind: TerrainKind,
+  extra: Partial<Terrain> = {},
+): Terrain {
+  return {
+    id,
+    kind,
+    name: '',
+    geo: [],
+    schematic: [],
+    closed: false,
+    hidden: false,
+    holes: [],
+    fill: 'solid',
+    ...extra,
+  }
 }
 
 export function createEmptyProject(name = 'Untitled network'): Project {
@@ -225,6 +301,8 @@ export function createEmptyProject(name = 'Untitled network'): Project {
     stations: [],
     lines: [],
     transfers: [],
+    assets: [],
+    placements: [],
     corridorOrder: {},
     crossings: {},
     modes: DEFAULT_MODES.map((m) => ({ ...m })),

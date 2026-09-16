@@ -94,17 +94,29 @@ export function findRoute(
     walksFrom.set(t.b, [...(walksFrom.get(t.b) ?? []), t.a])
   }
 
-  /** Neighbours of `station` reachable while staying on `line`. */
+  /**
+   * Neighbours of `station` reachable while staying on `line`.
+   *
+   * A branch marked `forward` may only be ridden in the order its stops are listed, so
+   * only the following stop is offered. That is what makes a terminal loop or a one-way
+   * running section behave: the return journey has to find another way round, exactly as
+   * a passenger would.
+   *
+   * Stations the branch merely passes through are absent from `stops`, so they are
+   * unreachable here by construction -- you cannot board an express where it does not
+   * call, and nor can you alight.
+   */
   const ridesFrom = (station: StationId, line: LineId): StationId[] => {
     const l = project.lines.find((x) => x.id === line)
     if (!l || l.hidden) return []
     const out: StationId[] = []
     for (const branch of l.branches) {
+      const oneWay = branch.direction === 'forward'
       for (let i = 0; i < branch.stops.length; i++) {
         if (branch.stops[i] !== station) continue
         const before = branch.stops[i - 1]
         const after = branch.stops[i + 1]
-        if (before && stationExists.has(before)) out.push(before)
+        if (!oneWay && before && stationExists.has(before)) out.push(before)
         if (after && stationExists.has(after)) out.push(after)
       }
     }

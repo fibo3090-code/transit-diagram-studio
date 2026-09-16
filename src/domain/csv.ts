@@ -17,8 +17,8 @@
  */
 
 import { newBranchId, newLineId, newStationId } from './ids'
-import { nextUnusedColor } from './defaults'
-import type { Branch, Line, Project, Station, StationId } from './types'
+import { makeBranch, makeStation, nextUnusedColor } from './defaults'
+import type { Branch, Line, Project, StationId } from './types'
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -117,18 +117,10 @@ export function applyCsv(draft: Project, rows: string[][]): ImportReport {
     if (s.name) byName.set(s.name.trim().toLowerCase(), s.id)
   }
 
-  const makeStation = (name: string, x: number, y: number): StationId => {
+  const addStation = (name: string, x: number, y: number): StationId => {
     const id = newStationId()
-    const station: Station = {
-      id,
-      name,
-      geo: { x, y },
-      schematic: { x, y },
-      modes: [],
-      label: { anchor: 'auto', offset: { x: 0, y: 0 }, pinned: false, angle: 0, hidden: false },
-    }
-    draft.stations.push(station)
-    if (name) byName.set(name.trim().toLowerCase(), id)
+    draft.stations.push(makeStation(id, name, { x, y }))
+    byName.set(name.trim().toLowerCase(), id)
     report.stationsAdded++
     return id
   }
@@ -159,7 +151,7 @@ export function applyCsv(draft: Project, rows: string[][]): ImportReport {
         }
         report.stationsMatched++
       } else {
-        makeStation(name, x, y)
+        addStation(name, x, y)
       }
     }
     return report
@@ -198,7 +190,7 @@ export function applyCsv(draft: Project, rows: string[][]): ImportReport {
         if (!id) {
           // Unknown stations are created stacked at the origin; the validator will
           // flag them and you place them properly afterwards.
-          id = makeStation(name, 0, 0)
+          id = addStation(name, 0, 0)
           report.warnings.push(`"${name}" was not in the project, so it was created at 0,0.`)
         } else {
           report.stationsMatched++
@@ -227,11 +219,9 @@ export function applyCsv(draft: Project, rows: string[][]): ImportReport {
         report.linesAdded++
       }
 
-      const branch: Branch = {
-        id: newBranchId(),
+      const branch: Branch = makeBranch(newBranchId(), stopIds, {
         name: g.branch || undefined,
-        stops: stopIds,
-      }
+      })
       line.branches.push(branch)
       report.stopsAdded += stopIds.length
     }
@@ -239,7 +229,7 @@ export function applyCsv(draft: Project, rows: string[][]): ImportReport {
     // A line created empty earlier would otherwise keep a stray blank branch.
     for (const l of draft.lines) {
       if (l.branches.length > 1) l.branches = l.branches.filter((b) => b.stops.length > 0)
-      if (l.branches.length === 0) l.branches.push({ id: newBranchId(), stops: [] })
+      if (l.branches.length === 0) l.branches.push(makeBranch(newBranchId()))
     }
     return report
   }

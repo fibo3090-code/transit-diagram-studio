@@ -12,7 +12,7 @@
  */
 
 import { newBranchId, newLineId, newProjectId, newStationId, newTerrainId } from './ids'
-import { createEmptyProject } from './defaults'
+import { createEmptyProject, makeBranch, makeStation, makeTerrain } from './defaults'
 import type { Branch, Line, Project, Station, StationId, Terrain, Vec2 } from './types'
 
 interface Seed {
@@ -45,14 +45,7 @@ export function createSampleProject(): Project {
     const id = newStationId()
     byName.set(seed.name, id)
     seq++
-    return {
-      id,
-      name: seed.name,
-      schematic: { ...seed.at },
-      geo: scatter(seed.at, seq),
-      modes: [],
-      label: { anchor: 'auto', offset: { x: 0, y: 0 }, pinned: false, angle: 0, hidden: false },
-    }
+    return makeStation(id, seed.name, seed.at, { geo: scatter(seed.at, seq) })
   }
 
   // A grid of 40 keeps every seeded segment octilinear from the start.
@@ -87,11 +80,8 @@ export function createSampleProject(): Project {
   const stations = seeds.map(place)
   const id = (name: string): StationId => byName.get(name)!
 
-  const branch = (stops: string[], name?: string): Branch => ({
-    id: newBranchId(),
-    name,
-    stops: stops.map(id),
-  })
+  const branch = (stops: string[], name?: string): Branch =>
+    makeBranch(newBranchId(), stops.map(id), { name })
 
   const line = (
     name: string,
@@ -134,9 +124,7 @@ export function createSampleProject(): Project {
 
   // The river: a wandering trace over the map, simplified to three strokes for the
   // diagram — the move that separates a transit map from a drawing on a screenshot.
-  const river: Terrain = {
-    id: newTerrainId(),
-    kind: 'waterway',
+  const river: Terrain = makeTerrain(newTerrainId(), 'waterway', {
     name: 'River Ald',
     geo: [
       { x: 60, y: 520 },
@@ -153,9 +141,7 @@ export function createSampleProject(): Project {
       { x: 520, y: 660 },
       { x: 860, y: 660 },
     ],
-    closed: false,
-    hidden: false,
-  }
+  })
 
   return {
     ...base,

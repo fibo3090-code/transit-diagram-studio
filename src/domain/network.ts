@@ -39,6 +39,22 @@ export function splitSegmentKey(key: SegmentKey | string): [StationId, StationId
 /** True when travelling a->b runs in the same direction the key is stored in. */
 export const isForward = (a: StationId, b: StationId): boolean => a < b
 
+/**
+ * A branch whose last stop repeats its first: a ring.
+ *
+ * Worth naming because a ring has no ends. Treating its join station as a terminus --
+ * which is what a first-and-last test does on its own -- puts a route bullet in the
+ * middle of the Circle line.
+ */
+export function isRing(branch: Branch): boolean {
+  const s = branch.stops
+  return s.length > 2 && s[0] === s[s.length - 1]
+}
+
+/** Same test, applied after stops referencing deleted stations have been dropped. */
+const closesOnItself = (stops: StationId[]): boolean =>
+  stops.length > 2 && stops[0] === stops[stops.length - 1]
+
 // ---------------------------------------------------------------------------
 // Traversal
 // ---------------------------------------------------------------------------
@@ -127,8 +143,12 @@ export function buildNetwork(project: Project): Network {
         touch(linesAt, id).add(line.id)
         if (i > 0 && i < stops.length - 1) touch(interiors, line.id).add(id)
       })
-      touch(endpoints, line.id).add(stops[0])
-      touch(endpoints, line.id).add(stops[stops.length - 1])
+      // A ring ends nowhere. Its join station is both first and last, and the interior
+      // test cannot catch it, so it would otherwise be reported as a terminus.
+      if (!closesOnItself(stops)) {
+        touch(endpoints, line.id).add(stops[0])
+        touch(endpoints, line.id).add(stops[stops.length - 1])
+      }
 
       for (let i = 0; i < stops.length - 1; i++) {
         const a = stops[i]
@@ -222,6 +242,36 @@ export function stationMap(project: Project): Map<StationId, Station> {
 }
 
 /**
+ * Order the stations a branch passes through without stopping along one segment.
+ *
+ * `passes` is a flat set rather than a per-segment map, because asking someone to say
+ * WHICH segment a skipped station belongs to is asking them to restate something the
+ * geometry already knows. Each candidate is projected onto the segment; those landing
+ * between its ends belong to it, ordered by how far along they sit.
+ *
+ * A station is assigned to the segment it projects most squarely onto, so an express
+ * skipping stops on several consecutive segments distributes them correctly instead of
+ * piling them all onto the first.
+ */
+function passedAlong(
+  a: Vec2,
+  b: Vec2,
+  candidates: { id: StationId; at: Vec2 }[],
+): { id: StationId; at: Vec2; t: number }[] {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  if (len2 < 1e-12) return []
+  const out: { id: StationId; at: Vec2; t: number }[] = []
+  for (const c of candidates) {
+    const t = ((c.at.x - a.x) * dx + (c.at.y - a.y) * dy) / len2
+    if (t <= 1e-6 || t >= 1 - 1e-6) continue
+    out.push({ id: c.id, at: c.at, t })
+  }
+  return out.sort((x, y) => x.t - y.t)
+}
+
+/**
  * Build the raw centreline for a branch plus the offset each segment should be drawn
  * at. The offsets stored in `Network` are canonical (direction-free) so that every line
  * sharing a corridor agrees on who sits where; here they are converted to
@@ -244,6 +294,11 @@ export function branchGeometry(
   const offsets: number[] = []
   const stopIndices: number[] = []
 
+  const served = new Set(stops)
+  const passCandidates = (branch.passes ?? [])
+    .filter((id) => stations.has(id) && !served.has(id))
+    .map((id) => ({ id, at: stations.get(id)![space] }))
+
   const first = stations.get(stops[0])!
   points.push({ ...first[space] })
   stopIndices.push(0)
@@ -263,6 +318,16 @@ export function branchGeometry(
     const bends = forward ? stored : [...stored].reverse()
     for (const bend of bends) {
       points.push({ ...bend[space] })
+      offsets.push(travel)
+    }
+
+    // Stations this branch runs through without calling. They join the centreline as
+    // ordinary vertices and carry no entry in `stopIndices`, which is what keeps them
+    // out of the symbol layer while still bending the route through them.
+    const from = stations.get(a)![space]
+    const to = stations.get(b)![space]
+    for (const skipped of passedAlong(from, to, passCandidates)) {
+      points.push({ ...skipped.at })
       offsets.push(travel)
     }
 

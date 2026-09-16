@@ -8,7 +8,7 @@
  * Run with `npm test`.
  */
 
-import { createEmptyProject, nextUnusedColor } from './defaults'
+import { createEmptyProject, makeBranch, makeStation, nextUnusedColor } from './defaults'
 import {
   dist,
   octilinearizeRun,
@@ -17,12 +17,14 @@ import {
   snapDir45,
 } from './geometry'
 import { newBranchId, newLineId, newStationId } from './ids'
+import { normalizeProject } from './migrate'
 import { placeLabels } from './labels'
 import { applyCsv, parseCsv } from './csv'
 import {
   branchGeometry,
   buildNetwork,
   isForward,
+  isRing,
   segmentKey,
 } from './network'
 import { findCrossings } from './crossings'
@@ -70,14 +72,7 @@ function assert(cond: boolean, message: string) {
 // ---------------------------------------------------------------------------
 
 function station(name: string, x: number, y: number): Station {
-  return {
-    id: newStationId(),
-    name,
-    geo: { x, y },
-    schematic: { x, y },
-    modes: [],
-    label: { anchor: 'auto', offset: { x: 0, y: 0 }, pinned: false, angle: 0, hidden: false },
-  }
+  return makeStation(newStationId(), name, { x, y })
 }
 
 function line(name: string, branches: StationId[][], color = '#C9342B'): Line {
@@ -86,7 +81,7 @@ function line(name: string, branches: StationId[][], color = '#C9342B'): Line {
     name,
     mode: 'metro',
     color,
-    branches: branches.map((stops): Branch => ({ id: newBranchId(), stops })),
+    branches: branches.map((stops): Branch => makeBranch(newBranchId(), stops)),
     bends: {},
     hidden: false,
   }
@@ -822,6 +817,168 @@ check('an unreadable CSV reports rather than throwing', () => {
   const report = applyCsv(p, parseCsv('alpha,beta\n1,2\n'))
   expect(report.shape, 'unknown')
   assert(report.warnings.length > 0, 'should explain what it wanted')
+})
+
+// ---------------------------------------------------------------------------
+// Rings, express patterns and direction
+// ---------------------------------------------------------------------------
+
+/** A closed loop: the last stop repeats the first. */
+function ringFixture() {
+  const p: Project = createEmptyProject('ring')
+  const a = station('A', 0, 0)
+  const b = station('B', 100, 0)
+  const c = station('C', 100, 100)
+  const d = station('D', 0, 100)
+  p.stations = [a, b, c, d]
+  p.lines = [line('Circle', [[a.id, b.id, c.id, d.id, a.id]])]
+  return { p, net: buildNetwork(p), a, b, c, d }
+}
+
+check('a closed loop has no termini', () => {
+  const { p, net } = ringFixture()
+  const termini = net.terminiByLine.get(p.lines[0].id)
+  expect(termini?.size ?? 0, 0, 'a ring ends nowhere, so it gets no route bullet: ')
+})
+
+check('a closed loop is still recognised as a ring', () => {
+  const { p } = ringFixture()
+  assert(isRing(p.lines[0].branches[0]), 'first stop repeated at the end means a ring')
+  assert(!isRing(line('L', [[newStationId(), newStationId()]]).branches[0]), 'a plain run is not')
+})
+
+check('an open branch still reports both its ends', () => {
+  const { p, a, d } = sharedCorridorFixture()
+  const net = buildNetwork(p)
+  const termini = net.terminiByLine.get(p.lines[0].id)!
+  expect([...termini].sort(), [a.id, d.id].sort(), 'the ring fix must not eat real termini: ')
+})
+
+check('a ring draws a closed centreline', () => {
+  const { p, net, a } = ringFixture()
+  const l = p.lines[0]
+  const g = branchGeometry(p, net, l, l.branches[0], 'schematic')!
+  const first = g.points[0]
+  const last = g.points[g.points.length - 1]
+  near(dist(first, last), 0, 1e-6, 'a ring must come back to where it started: ')
+  expect(g.stops[g.stops.length - 1], a.id)
+})
+
+/** A local calling everywhere and an express skipping the middle two. */
+function expressFixture() {
+  const p: Project = createEmptyProject('express')
+  const a = station('A', 0, 0)
+  const b = station('B', 100, 0)
+  const c = station('C', 200, 0)
+  const d = station('D', 300, 0)
+  p.stations = [a, b, c, d]
+  const local = line('Local', [[a.id, b.id, c.id, d.id]])
+  const exp = line('Express', [[a.id, d.id]], '#1B4F9C')
+  exp.branches[0].passes = [b.id, c.id]
+  p.lines = [local, exp]
+  return { p, net: buildNetwork(p), a, b, c, d, local, exp }
+}
+
+check('an express follows the alignment through the stations it skips', () => {
+  const { p, net, exp } = expressFixture()
+  const g = branchGeometry(p, net, exp, exp.branches[0], 'schematic')!
+  expect(g.points.length, 4, 'A, through B and C, to D: ')
+  expect(g.stopIndices, [0, 3], 'only the served ends carry a stop symbol: ')
+})
+
+check('a passed station is not a stop of that line', () => {
+  const { net, b, exp } = expressFixture()
+  const serving = net.linesAtStation.get(b.id) ?? []
+  assert(!serving.includes(exp.id), 'passing through is not calling')
+})
+
+check('a passed station still gets the express drawn through it', () => {
+  const { p, net, exp, b } = expressFixture()
+  const g = branchGeometry(p, net, exp, exp.branches[0], 'schematic')!
+  const hit = g.points.some((q) => dist(q, p.stations.find((s) => s.id === b.id)!.schematic) < 1e-6)
+  assert(hit, 'the centreline must actually pass through B')
+})
+
+check('you cannot board an express where it does not stop', () => {
+  const { p, net, b, d } = expressFixture()
+  const r = findRoute(p, net, b.id, d.id)!
+  assert(r !== null, 'B to D is reachable on the local')
+  assert(r.legs.every((l) => l.lineId !== null), 'no walking needed here')
+  const used = r.legs.map((l) => l.lineId)
+  assert(!used.includes(p.lines[1].id), 'the express does not call at B, so it cannot be boarded there')
+})
+
+check('an express is used when both ends are served', () => {
+  const { p, net, a, d } = expressFixture()
+  const r = findRoute(p, net, a.id, d.id)!
+  expect(r.legs.length, 1, 'one leg: ')
+  expect(r.legs[0].lineId, p.lines[1].id, 'the express is cheaper end to end: ')
+})
+
+/** Three stations on a one-way run. */
+function onewayFixture() {
+  const p: Project = createEmptyProject('oneway')
+  const a = station('A', 0, 0)
+  const b = station('B', 100, 0)
+  const c = station('C', 200, 0)
+  p.stations = [a, b, c]
+  const l = line('Loop', [[a.id, b.id, c.id]])
+  l.branches[0].direction = 'forward'
+  p.lines = [l]
+  return { p, net: buildNetwork(p), a, b, c }
+}
+
+check('a one-way branch can be ridden in its listed order', () => {
+  const { p, net, a, c } = onewayFixture()
+  const r = findRoute(p, net, a.id, c.id)
+  assert(r !== null, 'A to C runs with the direction of travel')
+  expect(r!.stopCount, 2)
+})
+
+check('a one-way branch cannot be ridden backwards', () => {
+  const { p, net, a, c } = onewayFixture()
+  expect(findRoute(p, net, c.id, a.id), null, 'C to A runs against the only direction offered: ')
+})
+
+check('a two-way branch is unaffected by the direction check', () => {
+  const { p, a, c } = onewayFixture()
+  p.lines[0].branches[0].direction = 'both'
+  const again = buildNetwork(p)
+  assert(findRoute(p, again, c.id, a.id) !== null, 'both means both')
+})
+
+check('migration gives a v2 project the v3 defaults', () => {
+  const p = createEmptyProject('m')
+  const s = station('A', 0, 0)
+  p.stations = [s]
+  p.lines = [line('L', [[s.id]])]
+  // Strip the v3 fields the way a project written by the older build would be.
+  const older = JSON.parse(JSON.stringify({ ...p, version: 2 }))
+  delete older.stations[0].badges
+  delete older.stations[0].status
+  delete older.stations[0].symbol
+  delete older.lines[0].branches[0].passes
+  delete older.lines[0].branches[0].direction
+  delete older.assets
+  delete older.placements
+  const fixed = normalizeProject(older)
+  expect(fixed.version, 3)
+  expect(fixed.stations[0].badges, [])
+  expect(fixed.stations[0].status, 'open')
+  expect(fixed.stations[0].symbol, { kind: 'auto' })
+  expect(fixed.lines[0].branches[0].passes, [])
+  expect(fixed.lines[0].branches[0].direction, 'both', 'an old branch rode both ways: ')
+  expect(fixed.assets, [])
+  expect(fixed.placements, [])
+})
+
+check('migration drops a symbol pointing at a missing asset', () => {
+  const p = createEmptyProject('m')
+  const s = station('A', 0, 0)
+  s.symbol = { kind: 'asset', assetId: 'as_gone' as never, scale: 1 }
+  p.stations = [s]
+  const fixed = normalizeProject(JSON.parse(JSON.stringify(p)))
+  expect(fixed.stations[0].symbol, { kind: 'auto' }, 'a dangling asset ref must fall back: ')
 })
 
 // ---------------------------------------------------------------------------
