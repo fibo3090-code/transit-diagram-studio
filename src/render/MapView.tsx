@@ -531,6 +531,10 @@ export function MapView() {
   }
 
   const onImagePointerDown = (e: React.PointerEvent, id: ImageId) => {
+    // While a crop is armed the screenshots have to let the pointer through: the
+    // surface owns the marquee, and this handler would otherwise stop propagation and
+    // drag the very image the crop is trying to cut from.
+    if (cropping) return
     if (tool !== 'select' || space !== 'geo') return
     const img = project.images.find((i) => i.id === id)
     if (!img || img.locked) return
