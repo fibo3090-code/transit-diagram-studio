@@ -34,7 +34,7 @@ import { findCrossings } from './crossings'
 import { findRoute } from './routing'
 import { newTransferId } from './ids'
 import { snapPoint } from './snapping'
-import { stationLevels, stationSymbol } from './symbols'
+import { lineBadges, stationLevels, stationSymbol } from './symbols'
 import type { Branch, Line, Project, Station, StationId, Vec2 } from './types'
 import { validateProject } from './validate'
 
@@ -1038,6 +1038,120 @@ check('a degenerate hole is dropped rather than drawn', () => {
   const sq = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]
   const d = polygonPathWithHoles(sq, [[{ x: 1, y: 1 }, { x: 2, y: 2 }]])
   expect(d.match(/Z/g)?.length, 1, 'two points cannot enclose anything: ')
+})
+
+// ---------------------------------------------------------------------------
+// Where the new model reaches the drawing
+// ---------------------------------------------------------------------------
+
+check('a ring gets no route bullet', () => {
+  const { p, net } = ringFixture()
+  expect(lineBadges(p, net, 'schematic').length, 0, 'a loop has no end to label: ')
+})
+
+check('an ordinary line still gets bullets at both ends', () => {
+  const { p } = sharedCorridorFixture()
+  const badges = lineBadges(p, buildNetwork(p), 'schematic')
+  assert(badges.length >= 2, 'two lines with two ends each')
+})
+
+check('a passed station keeps its symbol off the express', () => {
+  const { p, net, b } = expressFixture()
+  const station = p.stations.find((s) => s.id === b.id)!
+  const sym = stationSymbol(p, net, station, 'schematic')
+  // B is still served by the local, so it is a plain stop rather than an interchange.
+  expect(sym.lineCount, 1, 'passing through must not count as serving: ')
+  assert(!sym.terminus, 'and it is nobody\'s terminus')
+})
+
+check('an express does not make its skipped stops interchanges', () => {
+  const { net, b, c } = expressFixture()
+  assert(!net.interchanges.has(b.id), 'B is on one line only')
+  assert(!net.interchanges.has(c.id), 'and so is C')
+})
+
+check('a one-way branch still draws its full geometry', () => {
+  const { p, net } = onewayFixture()
+  const l = p.lines[0]
+  const g = branchGeometry(p, net, l, l.branches[0], 'schematic')!
+  expect(g.points.length, 3, 'direction restricts riding, not drawing: ')
+})
+
+check('migration fills in terrain holes and fill', () => {
+  const p = createEmptyProject('t')
+  const older = JSON.parse(
+    JSON.stringify({
+      ...p,
+      version: 2,
+      terrain: [
+        {
+          id: 'tr_1',
+          kind: 'water',
+          name: 'Lake',
+          geo: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }],
+          schematic: [],
+          closed: true,
+          hidden: false,
+        },
+      ],
+    }),
+  )
+  const fixed = normalizeProject(older)
+  expect(fixed.terrain[0].holes, [], 'no holes is not the same as undefined: ')
+  expect(fixed.terrain[0].fill, 'solid', 'solid is how every kind was painted before: ')
+  expect(fixed.terrain[0].schematic.length, 3, 'a missing diagram shape copies the traced one: ')
+})
+
+check('migration drops a placement whose asset is gone', () => {
+  const p = createEmptyProject('t')
+  const older = JSON.parse(
+    JSON.stringify({
+      ...p,
+      version: 2,
+      assets: [],
+      placements: [
+        {
+          id: 'pl_1',
+          what: { kind: 'asset', assetId: 'as_gone' },
+          geo: { x: 0, y: 0 },
+          schematic: { x: 0, y: 0 },
+          scale: 1,
+          angle: 0,
+          opacity: 1,
+          locked: false,
+          hidden: false,
+        },
+        {
+          id: 'pl_2',
+          what: { kind: 'legend' },
+          geo: { x: 5, y: 5 },
+          schematic: { x: 5, y: 5 },
+          scale: 1,
+          angle: 0,
+          opacity: 1,
+          locked: false,
+          hidden: false,
+        },
+      ],
+    }),
+  )
+  const fixed = normalizeProject(older)
+  expect(fixed.placements.length, 1, 'a dangling marker is invisible AND unselectable: ')
+  expect(fixed.placements[0].id, 'pl_2')
+})
+
+check('crossings ignore a line crossing itself', () => {
+  const a = { x: 0, y: 0 }
+  const b = { x: 100, y: 100 }
+  const c = { x: 0, y: 100 }
+  const d = { x: 100, y: 0 }
+  const one = findCrossings(
+    [{ id: 'L1', z: 1, width: 6, segments: [{ a, b, segKey: 'x' }, { a: c, b: d, segKey: 'y' }] }],
+    [],
+    0,
+    { length: 3, height: 3 },
+  )
+  expect(one.length, 0, 'a line crossing itself needs no bridge: ')
 })
 
 // ---------------------------------------------------------------------------

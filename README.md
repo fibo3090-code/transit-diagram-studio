@@ -13,7 +13,7 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 75 domain checks (pure logic, no browser) |
+| `npm test` | 83 domain checks (pure logic, no browser) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
 

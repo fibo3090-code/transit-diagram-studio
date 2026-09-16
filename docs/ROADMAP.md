@@ -299,7 +299,7 @@ The library and the ten asset types.
   not fire the app's `pointerdown` handlers. Since resolved: the gesture exists
   (`gesture.kind === 'marquee'` in `MapView`), and the crop tool now reuses it.
 - **Tier 1 model gaps** were reproduced against running code before being fixed, and the
-  fixes are held by 21 of the 75 domain checks.
+  fixes are held by 29 of the 83 domain checks.
 - **Tier 2 model gaps** (B6–B10) were read from the types rather than executed. Their
   implementations are covered by tests for the geometry (curves, holes) but not for the
   rendering.
