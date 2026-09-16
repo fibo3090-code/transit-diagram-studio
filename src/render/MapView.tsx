@@ -26,6 +26,7 @@ import type {
   ImageId,
   LabelAnchor,
   LineId,
+  PlacementId,
   StationId,
   TerrainId,
   TerrainKind,
@@ -47,7 +48,9 @@ import {
   RouteLayer,
   StationsLayer,
   TerrainHandlesLayer,
+  PlacementLayer,
   TerrainLayer,
+  TerrainPatterns,
   TransferLayer,
   type SegmentHit,
 } from './layers'
@@ -61,6 +64,7 @@ type Gesture =
   | { kind: 'stations'; ids: StationId[]; primary: StationId; grabOffset: Vec2 }
   | { kind: 'bend'; lineId: LineId; key: string; index: number; grabOffset: Vec2 }
   | { kind: 'image'; id: ImageId; grabOffset: Vec2 }
+  | { kind: 'placement'; ids: PlacementId[]; last: Vec2 }
   | { kind: 'terrain'; ids: TerrainId[]; last: Vec2 }
   | { kind: 'terrainPoint'; id: TerrainId; index: number; grabOffset: Vec2 }
   | { kind: 'label'; id: StationId; startOffset: Vec2; startWorld: Vec2 }
@@ -78,6 +82,9 @@ const IMAGE_SNAP = 14
 
 export function MapView() {
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // One automatic fit per mounted project, never again -- refitting mid-edit would
+  // yank the view out from under whatever is being dragged.
+  const fittedRef = useRef(false)
   const project = useEditor((s) => s.project)
   const space = useEditor((s) => s.space)
   const tool = useEditor((s) => s.tool)
@@ -105,6 +112,7 @@ export function MapView() {
   const removeBend = useEditor((s) => s.removeBend)
   const addTerrain = useEditor((s) => s.addTerrain)
   const moveTerrain = useEditor((s) => s.moveTerrain)
+  const movePlacements = useEditor((s) => s.movePlacements)
   const moveTerrainPoint = useEditor((s) => s.moveTerrainPoint)
   const insertTerrainPoint = useEditor((s) => s.insertTerrainPoint)
   const removeTerrainPoint = useEditor((s) => s.removeTerrainPoint)
@@ -193,6 +201,15 @@ export function MapView() {
     }
     const onFit = (e: Event) => fit((e as CustomEvent).detail === 'selection' ? 'selection' : 'all')
     window.addEventListener('tds:fit', onFit)
+
+    // Fit once, as soon as there is a project and a measured surface to fit it into.
+    // Opening a map clipped and expecting the reader to know about the F key is a poor
+    // first impression of a tool whose whole output is a picture.
+    if (!fittedRef.current && project && project.stations.length > 0 && size.w > 1 && size.h > 1) {
+      fittedRef.current = true
+      fit('all')
+    }
+
     return () => window.removeEventListener('tds:fit', onFit)
   }, [project, space, size, selection.stations, setViewport])
 
@@ -247,6 +264,7 @@ export function MapView() {
   const selectedLines = new Set<string>(selection.lines)
   const selectedTerrain = new Set<TerrainId>(selection.terrain)
   const selectedImages = new Set<ImageId>(selection.images)
+  const selectedPlacements = new Set<PlacementId>(selection.placements)
   const selectedTransfers = new Set<string>(selection.transfers)
   void selection.crossings
 
@@ -490,6 +508,16 @@ export function MapView() {
     select({ transfers: [id as TransferId] })
   }
 
+  const onPlacementPointerDown = (e: React.PointerEvent, id: PlacementId) => {
+    if (tool !== 'select') return
+    e.stopPropagation()
+    capture(e)
+    const already = selection.placements.includes(id)
+    const ids = already && selection.placements.length > 1 ? selection.placements : [id]
+    if (!already) select({ placements: [id] }, e.shiftKey)
+    setGesture({ kind: 'placement', ids, last: toWorld(e.clientX, e.clientY) })
+  }
+
   const onImagePointerDown = (e: React.PointerEvent, id: ImageId) => {
     if (tool !== 'select' || space !== 'geo') return
     const img = project.images.find((i) => i.id === id)
@@ -602,6 +630,17 @@ export function MapView() {
         moveTerrainPoint(gesture.id, gesture.index, r.point, space, {
           coalesceKey: `terrain-pt-${gesture.id}-${gesture.index}-${space}`,
         })
+        return
+      }
+
+      case 'placement': {
+        // Furniture moves by cursor delta with no snapping: a legend or a north arrow
+        // is positioned by eye against the whole composition, not against the grid.
+        const delta = sub(world, gesture.last)
+        movePlacements(gesture.ids, delta, space, {
+          coalesceKey: `placement-${gesture.ids.join(',')}-${space}`,
+        })
+        setGesture({ ...gesture, last: world })
         return
       }
 
@@ -824,6 +863,7 @@ export function MapView() {
       onPointerCancel={endGesture}
       onDoubleClick={() => draft && commitDraft()}
     >
+      <TerrainPatterns />
       <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.zoom})`}>
         <GridLayer project={project} space={space} zoom={viewport.zoom} bounds={viewBounds} />
 
@@ -898,6 +938,13 @@ export function MapView() {
         />
 
         <BadgeLayer project={project} network={network} space={space} />
+
+        <PlacementLayer
+          project={project}
+          space={space}
+          selected={selectedPlacements}
+          onPointerDown={onPlacementPointerDown}
+        />
 
         <GuidesLayer guides={guides} zoom={viewport.zoom} />
 

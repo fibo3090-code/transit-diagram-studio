@@ -19,6 +19,7 @@ import { add, dist, octilinearizeRun, simplify, sub } from '../domain/geometry'
 import {
   newBranchId,
   newLineId,
+  newPlacementId,
   newStationId,
   newTerrainId,
   newTransferId,
@@ -31,6 +32,8 @@ import {
 } from '../domain/network'
 import { findRoute, type Route } from '../domain/routing'
 import type {
+  Asset,
+  AssetId,
   Bend,
   CrossingOverride,
   ModeStyle,
@@ -40,6 +43,8 @@ import type {
   Line,
   LineId,
   ModeId,
+  Placement,
+  PlacementId,
   Project,
   SnapSettings,
   Station,
@@ -105,6 +110,7 @@ export interface Selection {
   images: ImageId[]
   transfers: TransferId[]
   crossings: string[]
+  placements: PlacementId[]
 }
 
 export const emptySelection = (): Selection => ({
@@ -114,6 +120,7 @@ export const emptySelection = (): Selection => ({
   images: [],
   transfers: [],
   crossings: [],
+  placements: [],
 })
 
 export interface Viewport {
@@ -262,6 +269,16 @@ interface EditorState {
   addImage: (img: ImageLayer) => void
   updateImage: (id: ImageId, patch: Partial<Omit<ImageLayer, 'id'>>, opts?: MutateOptions) => void
   deleteImages: (ids: ImageId[]) => void
+
+  // ------------------------------------------------------------------ assets
+  addAsset: (asset: Asset) => void
+  renameAsset: (id: AssetId, name: string) => void
+  /** Also strips any placement or station symbol that referred to it. */
+  deleteAsset: (id: AssetId) => void
+  addPlacement: (what: Placement['what'], at: Vec2, space: Space, label?: string) => PlacementId
+  updatePlacement: (id: PlacementId, patch: Partial<Placement>) => void
+  movePlacements: (ids: PlacementId[], delta: Vec2, space: Space, opts?: MutateOptions) => void
+  deletePlacements: (ids: PlacementId[]) => void
   reorderImage: (id: ImageId, toIndex: number) => void
 
   // -- settings
@@ -481,6 +498,7 @@ export const useEditor = create<EditorState>((set, get) => {
             images: merge(cur.images, sel.images),
             transfers: merge(cur.transfers, sel.transfers),
             crossings: merge(cur.crossings, sel.crossings),
+            placements: merge(cur.placements, sel.placements),
           },
         }
       }),
@@ -933,6 +951,76 @@ export const useEditor = create<EditorState>((set, get) => {
         d.images = d.images.filter((i) => !kill.has(i.id))
       })
       set((s) => ({ selection: { ...s.selection, images: [] } }))
+    },
+
+    // ------------------------------------------------------------------ assets
+
+    addAsset: (asset) => get().mutate('Add asset', (d) => { d.assets.push(asset) }),
+
+    renameAsset: (id, name) =>
+      get().mutate('Rename asset', (d) => {
+        const a = d.assets.find((x) => x.id === id)
+        if (a) a.name = name
+      }, { coalesceKey: `rename-asset-${id}` }),
+
+    deleteAsset: (id) => {
+      get().mutate('Delete asset', (d) => {
+        d.assets = d.assets.filter((a) => a.id !== id)
+        // A placement or symbol pointing at a deleted asset would render nothing and be
+        // unselectable -- an invisible object you cannot get rid of. Clean both up here
+        // rather than leaving it to the next load.
+        d.placements = d.placements.filter(
+          (pl) => pl.what.kind !== 'asset' || pl.what.assetId !== id,
+        )
+        for (const st of d.stations) {
+          if (st.symbol.kind === 'asset' && st.symbol.assetId === id) {
+            st.symbol = { kind: 'auto' }
+          }
+        }
+      })
+    },
+
+    addPlacement: (what, at, space, label) => {
+      const id = newPlacementId()
+      const pl: Placement = {
+        id,
+        what,
+        geo: { ...at },
+        schematic: { ...at },
+        scale: 1,
+        angle: 0,
+        opacity: 1,
+        locked: false,
+        hidden: false,
+        label,
+      }
+      void space
+      get().mutate('Add placement', (d) => { d.placements.push(pl) })
+      set((st) => ({ selection: { ...st.selection, placements: [id] } }))
+      return id
+    },
+
+    updatePlacement: (id, patch) =>
+      get().mutate('Update placement', (d) => {
+        const pl = d.placements.find((x) => x.id === id)
+        if (pl) Object.assign(pl, patch)
+      }, { coalesceKey: `update-placement-${id}` }),
+
+    movePlacements: (ids, delta, space, opts) =>
+      get().mutate('Move placement', (d) => {
+        const move = new Set(ids)
+        for (const pl of d.placements) {
+          if (!move.has(pl.id) || pl.locked) continue
+          pl[space] = { x: pl[space].x + delta.x, y: pl[space].y + delta.y }
+        }
+      }, opts),
+
+    deletePlacements: (ids) => {
+      const kill = new Set(ids)
+      get().mutate('Delete placement', (d) => {
+        d.placements = d.placements.filter((pl) => !kill.has(pl.id))
+      })
+      set((st) => ({ selection: { ...st.selection, placements: [] } }))
     },
 
     reorderImage: (id, toIndex) =>

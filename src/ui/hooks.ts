@@ -124,13 +124,37 @@ export function useKeyboard(opts: { onSearch?: () => void; onHelp?: () => void }
           break
         case 'Delete':
         case 'Backspace': {
-          if (s.selection.stations.length > 0) {
-            e.preventDefault()
-            s.deleteStations(s.selection.stations)
-          } else if (s.selection.terrain.length > 0) {
-            e.preventDefault()
-            s.deleteTerrain(s.selection.terrain)
+          // Every selectable thing answers to Delete. Stations and terrain used to be
+          // the only two, so a selected line, transfer, image or placement had to be
+          // removed from a panel -- which is not where you are looking when you press
+          // the key.
+          const sel = s.selection
+          let did = false
+          if (sel.stations.length > 0) {
+            s.deleteStations(sel.stations)
+            did = true
           }
+          if (sel.terrain.length > 0) {
+            s.deleteTerrain(sel.terrain)
+            did = true
+          }
+          if (sel.placements.length > 0) {
+            s.deletePlacements(sel.placements)
+            did = true
+          }
+          if (sel.images.length > 0) {
+            s.deleteImages(sel.images)
+            did = true
+          }
+          for (const id of sel.transfers) {
+            s.deleteTransfer(id)
+            did = true
+          }
+          for (const id of sel.lines) {
+            s.deleteLine(id)
+            did = true
+          }
+          if (did) e.preventDefault()
           break
         }
         case 'ArrowUp':
