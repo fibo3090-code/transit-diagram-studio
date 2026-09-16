@@ -1,0 +1,202 @@
+# Transit Diagram Studio
+
+Turn a pile of game map screenshots into a printable, Beck-style transit diagram.
+Everything runs on your machine: no accounts, no server, no quotas, no watermarks.
+
+```bash
+npm install
+npm run dev      # http://localhost:3000
+```
+
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | Dev server on port 3000 |
+| `npm run build` | Static production build into `dist/` |
+| `npm run preview` | Serve the built output |
+| `npm test` | 35 domain checks (pure logic, no browser) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run check` | typecheck + test + build |
+
+The build is entirely static. `dist/` can be opened from disk or dropped on any host.
+
+## Start here
+
+Open the **example map** from the front page before anything else. It is a finished
+five-line network with a branching tram, a river and several interchanges — the quickest
+way to see what the tool produces before facing a blank canvas.
+
+A new map opens with two clear ways to begin, and a coach in the corner names the single
+next useful step until you dismiss it.
+
+## The two ideas everything rests on
+
+**One network, two positions.** Every station stores where it really is on the stitched
+screenshot *and* where you dragged it on the diagram. Terrain shapes and manual bend
+points carry the same pair. Lines, interchanges and shared corridors are the same
+objects in both views, so recomposing the diagram can never break the network — and a
+corner you added to dodge a river in one view never distorts the other.
+
+**Assisted, never locked.** Every automated step yields an editable result. Auto-placed
+labels can be dragged (which pins them, and you can hand them back). Generated routes
+are real polylines you can bend. Snapping suspends while <kbd>Alt</kbd> is held. Nothing
+the app decides for you is final.
+
+A third rule falls out of the first: **interchanges, corridors, parallel offsets and
+terminus caps are never stored.** They are derived from each line's `stops` at render
+time, so they cannot drift out of sync with the graph.
+
+## The pipeline
+
+1. **Import & place screenshots** — drop images in, drag them into position. Edges snap
+   to neighbouring tiles, so manual stitching goes quickly. Per-image opacity, lock,
+   reorder, hide.
+2. **Trace terrain** *(optional)* — rivers, coasts, lakes, parks, boundaries. Each shape
+   keeps its traced form and a simplified diagram form, with one-click simplify. Select
+   one to reshape it: drag a corner, click an edge to add one, Alt+click to remove.
+3. **Place stations** — click to drop, then name them.
+4. **Build lines** — create a line, click its stations in order. Lines support real
+   **branching**: a line is a set of connected branches sharing one identity, so
+   Y-shaped services are first class.
+5. **Compose the diagram** — switch to the schematic view and drag stations into shape
+   with four snap types and live guides.
+6. **Export** — SVG, PNG, PDF, an interactive HTML page, or the project file.
+
+Along the way: station symbols follow each line's mode, route bullets sit at every
+terminus, labels place themselves around track and each other, and the Terrain tool's
+**Text** option drops free annotations anywhere on the map.
+
+**Crossing hops.** Where one line passes over another, the upper one breaks the lower
+with a short bridge, so a crossing reads as an overpass rather than a junction. The
+break exists ONLY at the crossing point: casing along a line's whole length would reach
+into the neighbouring track in a shared corridor and paint the background over anything
+the line passes — a river, a park. Crossings that land on a station are left alone,
+because those are junctions. Bridge width is adjustable, and 0 turns it off.
+
+**Out-of-station interchanges.** Select two stations and link them. They draw as a dashed
+connector with an optional note ("5 min walk"), and journeys can use them.
+
+**Transport modes are editable.** Add your own — monorail, funicular, whatever — with its
+own thickness, dash pattern, stop symbol and draw order. Built-in modes are editable too.
+
+**Journey planner.** Pick two stops and get the route with its legs and changes,
+highlighted on the map. It searches over (station, line) states rather than plain
+stations, because the cost of a journey is not only distance but how many times you have
+to change — a plain station graph cannot tell "stay aboard" from "get off and wait".
+
+## Snapping
+
+Two families of constraint, both treated as full lines rather than points.
+
+**Angles** radiate from a station's *connected neighbours*, not from the canvas — you
+aim roughly and land exactly on the 45° ray out of the station it joins to.
+
+**Levels** run parallel to an existing corridor: one per line in the bundle, plus one
+just beyond each edge. Snapping to an inner level puts your route exactly on the track
+of a specific line through a multi-line stop. Snapping to an outer one runs it alongside
+the whole bundle — the position that reads as *passes through without stopping*. Before
+levels, the only thing to snap to at a shared stop was its centre, which is the middle
+of the bundle and almost never the track you meant.
+
+Strength order:
+
+1. two constraint lines crossing
+2. a constraint crossing an alignment
+3. equal spacing along a constraint
+4. a single constraint, slid to the grid
+5. alignment on x and y independently
+6. bare grid
+
+Everything you can move snaps: stations, bends, and terrain of every kind — while
+tracing, while dragging a corner, and while moving a whole shape. Tracing shows a live
+preview of the segment about to be placed, so a river or park comes out octilinear the
+same way a line does. Each family toggles independently; hold <kbd>Alt</kbd> to suspend
+the lot.
+
+## Keyboard
+
+| Key | Action |
+| --- | --- |
+| <kbd>V</kbd> <kbd>S</kbd> <kbd>L</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>H</kbd> | Select · Station · Line · Terrain · Bend · Pan |
+| <kbd>G</kbd> | Swap geographic ↔ schematic |
+| <kbd>F</kbd> | Zoom to fit (or to selection) |
+| <kbd>Alt</kbd> *(held)* | Suspend snapping |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | Jump to a station or line, or run a command |
+| <kbd>?</kbd> | Keyboard shortcut reference |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | Undo / redo |
+| Arrows, <kbd>Shift</kbd>+arrows | Nudge 1px / 10px |
+| <kbd>Delete</kbd> | Delete selection |
+| <kbd>Esc</kbd> | Cancel the current trace, then the selection |
+
+With the bend tool: click a segment to add a corner, <kbd>Alt</kbd>+click a segment to
+insert a station there, <kbd>Alt</kbd>+click a handle to remove it.
+
+## Architecture
+
+```
+src/
+  domain/        pure TypeScript, no framework, no DOM — fully unit tested
+    types.ts       the data model
+    geometry.ts    vectors, octilinear helpers, parallel offsetting, RDP simplify
+    network.ts     everything derived from the graph: corridors, offsets, termini
+    snapping.ts    the snap engine
+    symbols.ts     which symbol a station gets, including interchange bars
+    labels.ts      collision-avoiding label placement
+    validate.ts    the network checker
+    csv.ts         CSV import and export
+    routing.ts     journey planning across the network
+    migrate.ts     bringing older saved projects up to date
+  store/         Zustand + Immer, patch-based history
+  persistence/   IndexedDB (projects + image blobs), file save/open, image import
+  render/        one SVG surface for both views, plus its layers
+  export/        SVG, PNG, a hand-written PDF writer, and a self-contained HTML page
+  ui/            toolbar, panels, inspector, command palette, hooks
+```
+
+**History is patch-based.** Every mutation goes through `mutate()`, which records
+forward and inverse Immer patches, so undo/redo covers every operation — including bulk
+ones — without any command knowing it exists. Gestures coalesce into single undo steps.
+Only `project` is under history; viewport, selection and tool are not, so undo never
+scrolls the canvas or changes what is selected.
+
+**One renderer, not two.** The original plan called for Canvas 2D in the geographic view
+and SVG in the schematic one. They are unified as a single SVG surface, which collapses
+two renderers, two hit-testing paths and two interaction models into one. If a project
+ever holds enough imagery to stutter, the image layer alone can move to canvas without
+touching anything else.
+
+**Old projects are normalised on load.** Every settings addition would otherwise read as
+`false` in projects saved by an earlier build, silently switching the new feature off for
+existing work. `normalizeProject` fills gaps with defaults on the way out of storage and
+never overwrites a value that is already there.
+
+**Export clones the live surface** rather than re-drawing the map a second way, so what
+you export is by construction what you saw. Editing chrome is tagged `data-ui` at the
+point it is created and stripped on the way out.
+
+**The interactive page is one file.** It inlines the exported SVG plus a small script,
+with no dependencies and no network access, so it opens from a USB stick. Clicking a line
+isolates it; hovering a station lists what calls there. It works because export already
+stamps ids on every line group and station.
+
+**PDF is written directly**, with the map embedded losslessly as deflate-compressed RGB.
+JPEG would have been less code but puts ringing artefacts around every line on a
+flat-colour diagram. For a true vector page, export SVG.
+
+## Limits worth knowing
+
+- Screenshots are downscaled to 4096px on the longest edge at import; the stitched
+  canvas is intended to stay under roughly 8000×8000.
+- PNG export clamps to 16384px on the longest edge and tells you when it did.
+- Undo history holds 2000 steps.
+- Projects live in this browser's IndexedDB. The app asks for persistent storage on
+  first load; export a project file to move it between machines or browsers.
+
+## Not built
+
+**Automatic screenshot alignment** was dropped rather than deferred. It was the last
+item on the original plan, but manual placement with edge snapping already covers the
+job, and the effort buys less than almost anything else it could be spent on.
+
+Whole-network auto-beautify is also out: octilinear layout is an NP-hard optimisation
+that would land near 70% and leave you fighting the rest. Per-line **Straighten** gives
+most of the value for a fraction of the work.
