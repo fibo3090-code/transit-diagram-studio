@@ -198,6 +198,8 @@ interface EditorState {
   setStationPos: (id: StationId, pos: Vec2, space: Space, opts?: MutateOptions) => void
   moveStations: (ids: StationId[], delta: Vec2, space: Space, opts?: MutateOptions) => void
   renameStation: (id: StationId, name: string) => void
+  /** Any station field other than its two positions, which have their own movers. */
+  updateStation: (id: StationId, patch: Partial<Station>) => void
   setLabel: (id: StationId, patch: Partial<StationLabel>, opts?: MutateOptions) => void
   resetLabel: (id: StationId) => void
   renameMany: (renames: { id: StationId; name: string }[], label?: string) => void
@@ -218,6 +220,10 @@ interface EditorState {
   appendStop: (lineId: LineId, branchId: string, stationId: StationId) => void
   insertStop: (lineId: LineId, branchId: string, index: number, stationId: StationId) => void
   removeStop: (lineId: LineId, branchId: string, index: number) => void
+  /** Direction, colour, service label -- anything on a branch but its stop list. */
+  updateBranch: (lineId: LineId, branchId: string, patch: Partial<Branch>) => void
+  /** Turn a call into a pass-through, or back. */
+  setStopCalls: (lineId: LineId, branchId: string, stationId: StationId, calls: boolean) => void
   reverseBranch: (lineId: LineId, branchId: string) => void
   /** Split a segment by dropping a brand-new station onto it. */
   addStationOnSegment: (
@@ -543,6 +549,12 @@ export const useEditor = create<EditorState>((set, get) => {
         }
       }, opts ?? { coalesceKey: `move-many-${ids.join(',')}-${space}` }),
 
+    updateStation: (id, patch) =>
+      get().mutate('Update station', (d) => {
+        const st = d.stations.find((x) => x.id === id)
+        if (st) Object.assign(st, patch)
+      }, { coalesceKey: `update-station-${id}` }),
+
     renameStation: (id, name) =>
       get().mutate('Rename station', (d) => {
         const s = d.stations.find((x) => x.id === id)
@@ -724,6 +736,28 @@ export const useEditor = create<EditorState>((set, get) => {
         const b = findBranch(d, lineId, branchId)
         if (!b) return
         b.stops.splice(Math.max(0, Math.min(b.stops.length, index)), 0, stationId)
+      }),
+
+    updateBranch: (lineId, branchId, patch) =>
+      get().mutate('Update branch', (d) => {
+        const b = findBranch(d, lineId, branchId)
+        if (b) Object.assign(b, patch)
+      }, { coalesceKey: `update-branch-${branchId}` }),
+
+    setStopCalls: (lineId, branchId, stationId, calls) =>
+      get().mutate(calls ? 'Call at stop' : 'Pass through stop', (d) => {
+        const b = findBranch(d, lineId, branchId)
+        if (!b) return
+        if (calls) {
+          // Back to being a call. It goes on the end rather than guessing where in the
+          // run it belongs -- the order is the route, and inventing a position could
+          // silently reroute the line.
+          b.passes = b.passes.filter((x) => x !== stationId)
+          if (!b.stops.includes(stationId)) b.stops.push(stationId)
+        } else {
+          b.stops = b.stops.filter((x) => x !== stationId)
+          if (!b.passes.includes(stationId)) b.passes.push(stationId)
+        }
       }),
 
     removeStop: (lineId, branchId, index) =>

@@ -4,11 +4,18 @@ import { applyCsv, linesToCsv, parseCsv, stationsToCsv, type ImportReport } from
 import { LINE_PALETTE, STYLE_PRESETS, modeById } from '../domain/defaults'
 import { splitSegmentKey, type Space } from '../domain/network'
 import type {
+  AssetId,
+  BadgeShape,
+  BranchDirection,
   ImageLayer,
   Line,
   LineId,
+  PlacementId,
   SnapKind,
   StationId,
+  StationStatus,
+  TerrainFill,
+  TerrainId,
   TerrainKind,
 } from '../domain/types'
 import { summarizeIssues, validateProject } from '../domain/validate'
@@ -16,7 +23,7 @@ import { downloadText, importAssetFiles, importImageFiles, pickFiles } from '../
 import { requestFit } from '../render/MapView'
 import { networkOf, useEditor, type Tool } from '../store/editor-store'
 import { contentBounds } from '../export/exporters'
-import { useBlobUrls } from '../render/layers'
+import { BUILTIN_BADGES, useBlobUrls } from '../render/layers'
 import {
   FloatingTools,
   MODES,
@@ -482,7 +489,14 @@ function LinesTab() {
                       >
                         {line.name || 'Untitled'}
                       </button>
-                      <span className="flex shrink-0 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                      {/*
+                        Always visible, never hover-only. The panel below this list
+                        states that the order decides which line sits on which side of
+                        a shared corridor -- so hiding the only control that changes it
+                        until the pointer happens to land on the row was the wrong
+                        trade the whole time.
+                      */}
+                      <span className="tds-row-actions flex shrink-0 items-center">
                         <IconButton
                           label="Move up"
                           disabled={i === 0}
@@ -1193,8 +1207,19 @@ export function Inspector() {
       ? project.lines.find((l) => l.id === selection.lines[0])
       : undefined
 
+  const terrain =
+    selection.terrain.length === 1
+      ? project.terrain.find((t) => t.id === selection.terrain[0])
+      : undefined
+  const placement =
+    selection.placements.length === 1
+      ? project.placements.find((pl) => pl.id === selection.placements[0])
+      : undefined
+
+  // No wrapper of its own any more: the resizable panel owns the width and the
+  // scrolling. This used to be a second fixed-width aside nested inside the first.
   return (
-    <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-white p-3">
+    <>
       {crossingKey ? (
         <CrossingInspector crossingKey={crossingKey} />
       ) : transfer ? (
@@ -1203,12 +1228,225 @@ export function Inspector() {
         <StationInspector id={station.id} />
       ) : line ? (
         <LineInspector line={line} />
+      ) : terrain ? (
+        <TerrainInspector id={terrain.id} />
+      ) : placement ? (
+        <PlacementInspector id={placement.id} />
       ) : selection.stations.length > 1 ? (
         <MultiStationInspector ids={selection.stations} />
       ) : (
         <NothingSelected />
       )}
-    </aside>
+    </>
+  )
+}
+
+/** A traced shape: how it is filled, the rings cut out of it, and free text styling. */
+function TerrainInspector({ id }: { id: TerrainId }) {
+  const project = useEditor((s) => s.project)!
+  const updateTerrain = useEditor((s) => s.updateTerrain)
+  const deleteTerrain = useEditor((s) => s.deleteTerrain)
+  const t = project.terrain.find((x) => x.id === id)
+  if (!t) return null
+
+  const text = t.text ?? {}
+  const patchText = (patch: Partial<NonNullable<typeof t.text>>) =>
+    updateTerrain(id, { text: { ...text, ...patch } })
+
+  return (
+    <div className="space-y-3">
+      <SectionLabel>{TERRAIN_LABEL[t.kind] ?? 'Shape'}</SectionLabel>
+
+      <input
+        value={t.name}
+        onChange={(e) => updateTerrain(id, { name: e.target.value })}
+        placeholder={t.kind === 'label' ? 'The text to show' : 'Name this shape'}
+        className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-medium focus:border-slate-900 focus:outline-none"
+      />
+
+      {t.kind === 'zone' && (
+        <Field label="Zone" hint="Stations carrying this zone name belong to this band.">
+          <input
+            value={t.zone ?? ''}
+            onChange={(e) => updateTerrain(id, { zone: e.target.value || undefined })}
+            placeholder="e.g. 1"
+            className={inputClass}
+          />
+        </Field>
+      )}
+
+      {t.kind === 'label' ? (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Size">
+              <input
+                type="number"
+                value={text.size ?? Math.round(project.style.fontSize * 1.4)}
+                onChange={(e) => patchText({ size: Number(e.target.value) })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Angle">
+              <input
+                type="number"
+                value={text.angle ?? 0}
+                onChange={(e) => patchText({ angle: Number(e.target.value) })}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={text.color ?? project.style.foreground}
+              onChange={(e) => patchText({ color: e.target.value })}
+              className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-transparent"
+              aria-label="Text colour"
+            />
+            <Segmented
+              value={text.align ?? 'middle'}
+              onChange={(v) => patchText({ align: v as 'start' | 'middle' | 'end' })}
+              options={[
+                { value: 'start', label: 'Left' },
+                { value: 'middle', label: 'Centre' },
+                { value: 'end', label: 'Right' },
+              ]}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Toggle
+              label="Bold"
+              checked={(text.weight ?? 400) >= 600}
+              onChange={(v) => patchText({ weight: v ? 700 : 400 })}
+            />
+            <Toggle
+              label="Italic"
+              checked={!!text.italic}
+              onChange={(v) => patchText({ italic: v })}
+            />
+          </div>
+          <Slider
+            label="Opacity"
+            hint="Annotations usually sit back from the network."
+            value={Math.round((text.opacity ?? 0.45) * 100)}
+            min={10}
+            max={100}
+            suffix="%"
+            onChange={(v) => patchText({ opacity: v / 100 })}
+          />
+        </>
+      ) : (
+        <>
+          <Field label="Fill" hint="Hatching reads as parkland; flat colour reads as water.">
+            <Segmented
+              value={t.fill}
+              onChange={(v) => updateTerrain(id, { fill: v as TerrainFill })}
+              options={[
+                { value: 'solid', label: 'Solid' },
+                { value: 'hatch', label: 'Hatch' },
+                { value: 'stipple', label: 'Stipple' },
+                { value: 'none', label: 'Outline' },
+              ]}
+            />
+          </Field>
+
+          {t.closed && (
+            <Field
+              label="Holes"
+              hint="A ring cut out of this shape — an island in a lake, a courtyard in a park."
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] text-slate-600">
+                  {t.holes.length === 0 ? 'None' : `${t.holes.length} cut out`}
+                </span>
+                {t.holes.length > 0 && (
+                  <Button onClick={() => updateTerrain(id, { holes: [] })}>Clear</Button>
+                )}
+              </div>
+            </Field>
+          )}
+        </>
+      )}
+
+      <button
+        onClick={() => deleteTerrain([id])}
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-[12.5px] font-medium text-red-600 hover:bg-red-50"
+      >
+        <IconTrash size={13} />
+        Delete shape
+      </button>
+    </div>
+  )
+}
+
+/** A piece of map furniture: a marker, the legend, an arrow, a frame. */
+function PlacementInspector({ id }: { id: PlacementId }) {
+  const project = useEditor((s) => s.project)!
+  const updatePlacement = useEditor((s) => s.updatePlacement)
+  const deletePlacements = useEditor((s) => s.deletePlacements)
+  const pl = project.placements.find((x) => x.id === id)
+  if (!pl) return null
+
+  const name =
+    pl.what.kind === 'asset'
+      ? (project.assets.find((a) => pl.what.kind === 'asset' && a.id === pl.what.assetId)?.name ??
+        'Marker')
+      : pl.what.kind
+
+  return (
+    <div className="space-y-3">
+      <SectionLabel>{name}</SectionLabel>
+
+      {pl.what.kind !== 'asset' && (
+        <Field label="Caption">
+          <input
+            value={pl.label ?? ''}
+            onChange={(e) => updatePlacement(id, { label: e.target.value || undefined })}
+            placeholder="Leave blank for the default"
+            className={inputClass}
+          />
+        </Field>
+      )}
+
+      <Slider
+        label="Size"
+        value={Math.round(pl.scale * 100)}
+        min={20}
+        max={400}
+        suffix="%"
+        onChange={(v) => updatePlacement(id, { scale: v / 100 })}
+      />
+      <Slider
+        label="Rotation"
+        value={pl.angle}
+        min={-180}
+        max={180}
+        suffix="°"
+        onChange={(v) => updatePlacement(id, { angle: v })}
+      />
+      <Slider
+        label="Opacity"
+        value={Math.round(pl.opacity * 100)}
+        min={10}
+        max={100}
+        suffix="%"
+        onChange={(v) => updatePlacement(id, { opacity: v / 100 })}
+      />
+      <Toggle
+        label="Locked"
+        hint="Stops it being dragged by accident while you work around it."
+        checked={pl.locked}
+        onChange={(v) => updatePlacement(id, { locked: v })}
+      />
+
+      <button
+        onClick={() => deletePlacements([id])}
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-[12.5px] font-medium text-red-600 hover:bg-red-50"
+      >
+        <IconTrash size={13} />
+        Remove from the map
+      </button>
+    </div>
   )
 }
 
@@ -1268,6 +1506,25 @@ export function MapStylePanel() {
         </p>
       </Section>
 
+      <Section title="Route bullets">
+        <Field
+          label="Shape"
+          hint="Networks are recognised by this as much as by their colours."
+        >
+          <select
+            value={project.style.badgeShape}
+            onChange={(e) => setStyle({ badgeShape: e.target.value as BadgeShape })}
+            className={inputClass}
+          >
+            <option value="roundel">Roundel — a bar across a ring</option>
+            <option value="circle">Circle</option>
+            <option value="square">Square</option>
+            <option value="diamond">Diamond</option>
+            <option value="hex">Hexagon</option>
+          </select>
+        </Field>
+      </Section>
+
       <Section title="Fine tuning">
         <Slider
           label="Corridor spacing"
@@ -1314,6 +1571,23 @@ export function MapStylePanel() {
           max={22}
           step={0.5}
           onChange={(v) => setStyle({ fontSize: v })}
+        />
+        <Slider
+          label="Click target"
+          hint="How close the pointer has to get to a stop. Larger is easier to hit; the drawn dot does not change."
+          value={project.style.hitRadius}
+          min={8}
+          max={32}
+          onChange={(v) => setStyle({ hitRadius: v })}
+        />
+        <Slider
+          label="Second name size"
+          hint="Relative to the main name."
+          value={Math.round(project.style.secondaryNameScale * 100)}
+          min={50}
+          max={100}
+          suffix="%"
+          onChange={(v) => setStyle({ secondaryNameScale: v / 100 })}
         />
         <Slider
           label="Line thickness"
@@ -1387,6 +1661,7 @@ function StationInspector({ id }: { id: StationId }) {
   const resetToGeographic = useEditor((s) => s.resetToGeographic)
   const resetLabel = useEditor((s) => s.resetLabel)
   const setLabel = useEditor((s) => s.setLabel)
+  const updateStation = useEditor((s) => s.updateStation)
   const station = project.stations.find((s) => s.id === id)
   if (!station) return null
 
@@ -1406,6 +1681,94 @@ function StationInspector({ id }: { id: StationId }) {
         placeholder="Name this stop"
         className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-medium focus:border-slate-900 focus:outline-none"
       />
+
+      {/*
+        A second name, set smaller beneath the first. Half the world's networks need
+        one -- Tokyo, Seoul, Brussels, Montreal -- and a single name field cannot
+        carry both scripts.
+      */}
+      <input
+        value={station.nameSecondary ?? ''}
+        onChange={(e) => updateStation(id, { nameSecondary: e.target.value || undefined })}
+        placeholder="Second name (optional)"
+        className={inputClass}
+        aria-label="Second name"
+      />
+
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Fare zone">
+          <input
+            value={station.zone ?? ''}
+            onChange={(e) => updateStation(id, { zone: e.target.value || undefined })}
+            placeholder="e.g. 1"
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Status">
+          <select
+            value={station.status}
+            onChange={(e) => updateStation(id, { status: e.target.value as StationStatus })}
+            className={inputClass}
+          >
+            <option value="open">Open</option>
+            <option value="construction">Under construction</option>
+            <option value="planned">Planned</option>
+          </select>
+        </Field>
+      </div>
+
+      <Field label="Marks" hint="Shown beside the name on the finished map.">
+        <div className="flex flex-wrap gap-1">
+          {BUILTIN_BADGES.map((b) => {
+            const on = station.badges.includes(b.id)
+            return (
+              <button
+                key={b.id}
+                onClick={() =>
+                  updateStation(id, {
+                    badges: on
+                      ? station.badges.filter((x) => x !== b.id)
+                      : [...station.badges, b.id],
+                  })
+                }
+                aria-pressed={on}
+                title={b.name}
+                className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors ${
+                  on
+                    ? 'border-slate-900 bg-slate-900 text-white'
+                    : 'border-slate-200 text-slate-600 hover:border-slate-400'
+                }`}
+              >
+                {b.name}
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+
+      {project.assets.length > 0 && (
+        <Field label="Symbol" hint="Use a mark from your library instead of the derived shape.">
+          <select
+            value={station.symbol.kind === 'asset' ? station.symbol.assetId : 'auto'}
+            onChange={(e) =>
+              updateStation(id, {
+                symbol:
+                  e.target.value === 'auto'
+                    ? { kind: 'auto' }
+                    : { kind: 'asset', assetId: e.target.value as AssetId, scale: 1 },
+              })
+            }
+            className={inputClass}
+          >
+            <option value="auto">Derived from the lines</option>
+            {project.assets.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <div>
         <SectionLabel>
@@ -1550,6 +1913,8 @@ function LineInspector({ line }: { line: Line }) {
   const deleteBranch = useEditor((s) => s.deleteBranch)
   const reverseBranch = useEditor((s) => s.reverseBranch)
   const removeStop = useEditor((s) => s.removeStop)
+  const updateBranch = useEditor((s) => s.updateBranch)
+  const setStopCalls = useEditor((s) => s.setStopCalls)
   const setActiveLine = useEditor((s) => s.setActiveLine)
   const setTool = useEditor((s) => s.setTool)
   const select = useEditor((s) => s.select)
@@ -1647,6 +2012,43 @@ function LineInspector({ line }: { line: Line }) {
                 </IconButton>
               )}
             </div>
+            <div className="mb-1.5 grid grid-cols-2 gap-1.5">
+              <Segmented
+                value={b.direction}
+                onChange={(v) => updateBranch(line.id, b.id, { direction: v as BranchDirection })}
+                options={[
+                  { value: 'both', label: 'Both ways' },
+                  { value: 'forward', label: 'One way' },
+                ]}
+              />
+              <input
+                value={b.service ?? ''}
+                onChange={(e) => updateBranch(line.id, b.id, { service: e.target.value || undefined })}
+                placeholder="When it runs"
+                title="Free text, e.g. Nights or Peak only. Shown, never interpreted."
+                className="rounded-lg border border-slate-300 px-2 py-1 text-[11.5px] focus:border-slate-900 focus:outline-none"
+              />
+            </div>
+
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="text-[11px] text-slate-500">Branch colour</span>
+              <input
+                type="color"
+                value={b.color ?? line.color}
+                onChange={(e) => updateBranch(line.id, b.id, { color: e.target.value })}
+                className="h-5 w-8 cursor-pointer rounded border border-slate-300 bg-transparent"
+                aria-label="Branch colour"
+              />
+              {b.color && (
+                <button
+                  onClick={() => updateBranch(line.id, b.id, { color: undefined })}
+                  className="text-[11px] text-slate-500 underline hover:text-slate-900"
+                >
+                  match the line
+                </button>
+              )}
+            </div>
+
             {b.stops.length === 0 ? (
               <p className="px-1 py-1 text-[11px] text-slate-400">
                 Empty — hit “Add stops”, then click stations.
@@ -1664,6 +2066,13 @@ function LineInspector({ line }: { line: Line }) {
                     >
                       {nameOf(sid)}
                     </button>
+                    <button
+                      onClick={() => setStopCalls(line.id, b.id, sid, false)}
+                      title="This line passes through without stopping"
+                      className="shrink-0 rounded px-1 text-[13px] leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                    >
+                      ●
+                    </button>
                     <IconButton
                       label="Remove this stop"
                       className="opacity-0 focus:opacity-100 group-hover:opacity-100"
@@ -1674,6 +2083,34 @@ function LineInspector({ line }: { line: Line }) {
                   </li>
                 ))}
               </ol>
+            )}
+
+            {b.passes.length > 0 && (
+              <div className="mt-2 border-t border-dashed border-slate-200 pt-1.5">
+                <span className="text-[11px] font-medium text-slate-500">
+                  Passes through without stopping
+                </span>
+                <ul className="mt-1 space-y-0.5">
+                  {b.passes.map((sid) => (
+                    <li key={sid} className="group flex items-center gap-1">
+                      <span className="w-4 shrink-0 text-right text-[11px] text-slate-300">○</span>
+                      <button
+                        onClick={() => select({ stations: [sid] })}
+                        className="min-w-0 flex-1 truncate text-left text-[11.5px] italic text-slate-500 hover:text-slate-900 hover:underline"
+                      >
+                        {nameOf(sid)}
+                      </button>
+                      <button
+                        onClick={() => setStopCalls(line.id, b.id, sid, true)}
+                        title="Call here instead — it is added at the end of the run"
+                        className="shrink-0 rounded px-1 text-[11px] text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                      >
+                        call here
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         ))}
