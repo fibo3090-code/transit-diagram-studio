@@ -55,11 +55,20 @@ const isTypingTarget = (t: EventTarget | null): boolean => {
  * snapping mid-drag, which is the escape hatch that keeps assisted placement from ever
  * being a trap.
  */
-export function useKeyboard(opts: { onSearch?: () => void; onHelp?: () => void } = {}) {
+export function useKeyboard(
+  opts: {
+    onSearch?: () => void
+    onHelp?: () => void
+    /** Rail sections answer to 1-7, which is what their tooltips promise. */
+    onMode?: (index: number) => void
+  } = {},
+) {
   const onSearchRef = useRef(opts.onSearch)
   const onHelpRef = useRef(opts.onHelp)
+  const onModeRef = useRef(opts.onMode)
   onSearchRef.current = opts.onSearch
   onHelpRef.current = opts.onHelp
+  onModeRef.current = opts.onMode
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -101,6 +110,12 @@ export function useKeyboard(opts: { onSearch?: () => void; onHelp?: () => void }
       }
 
       if (mod) return
+
+      if (onModeRef.current && e.key >= '1' && e.key <= '7') {
+        e.preventDefault()
+        onModeRef.current(Number(e.key) - 1)
+        return
+      }
 
       switch (e.key) {
         case 'v': s.setTool('select'); break

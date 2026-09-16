@@ -34,6 +34,7 @@ import type {
   Vec2,
 } from '../domain/types'
 import { contentBounds } from '../export/exporters'
+import { cropAssetFromImages } from '../persistence/files'
 import { networkOf, useEditor } from '../store/editor-store'
 import {
   BadgeLayer,
@@ -118,6 +119,9 @@ export function MapView() {
   const addTerrain = useEditor((s) => s.addTerrain)
   const moveTerrain = useEditor((s) => s.moveTerrain)
   const movePlacements = useEditor((s) => s.movePlacements)
+  const cropping = useEditor((s) => s.cropping)
+  const setCropping = useEditor((s) => s.setCropping)
+  const addAsset = useEditor((s) => s.addAsset)
   const moveTerrainPoint = useEditor((s) => s.moveTerrainPoint)
   const insertTerrainPoint = useEditor((s) => s.insertTerrainPoint)
   const removeTerrainPoint = useEditor((s) => s.removeTerrainPoint)
@@ -831,6 +835,22 @@ export function MapView() {
       const maxY = Math.max(a.y, b.y)
       // A click without a drag should clear, not select everything.
       if (Math.abs(maxX - minX) > 3 || Math.abs(maxY - minY) > 3) {
+        if (cropping && space === 'geo') {
+          // The same drag, read differently: cut the region out of the screenshots
+          // rather than selecting what is inside it.
+          void (async () => {
+            const asset = await cropAssetFromImages(
+              project.images,
+              { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+              `Crop ${project.assets.length + 1}`,
+            )
+            if (asset) addAsset(asset)
+            setCropping(false)
+          })()
+          setGesture(null)
+          setGuides([])
+          return
+        }
         const hits = project.stations
           .filter((s) => {
             const p = s[space]
@@ -849,7 +869,7 @@ export function MapView() {
       ? gesture?.kind === 'pan'
         ? 'grabbing'
         : 'grab'
-      : tool === 'station' || tool === 'terrain'
+      : cropping || tool === 'station' || tool === 'terrain'
         ? 'crosshair'
         : 'default'
 

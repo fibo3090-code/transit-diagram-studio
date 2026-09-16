@@ -33,7 +33,7 @@ import {
 } from '../ui/Onboarding'
 import { Browser, Inspector, MapStylePanel, ToolPalette, Toolbar } from '../ui/panels'
 import { Button, IconButton, Kbd, Toggle, inputClass } from '../ui/primitives'
-import { IconRail, ResizablePanel, useUiPrefs, type Mode } from '../ui/shell'
+import { IconRail, MODES, ResizablePanel, useUiPrefs, type Mode } from '../ui/shell'
 import { validateProject } from '../domain/validate'
 
 export const Route = createFileRoute('/p/$projectId')({ component: Editor })
@@ -61,6 +61,7 @@ function Editor() {
   useKeyboard({
     onSearch: () => setPalette((v) => !v),
     onHelp: () => setHelp((v) => !v),
+    onMode: (i) => MODES[i] && setMode(MODES[i].id),
   })
   useUnsavedGuard()
 

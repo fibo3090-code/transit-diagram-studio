@@ -91,6 +91,7 @@ const TERRAIN_KINDS: { id: TerrainKind; label: string }[] = [
   { id: 'green', label: 'Park' },
   { id: 'builtup', label: 'Built-up' },
   { id: 'boundary', label: 'Boundary' },
+  { id: 'zone', label: 'Fare zone' },
   { id: 'label', label: 'Text' },
 ]
 
@@ -625,6 +626,7 @@ function StationsTab() {
 }
 
 const TERRAIN_LABEL: Record<string, string> = {
+  zone: 'Fare zone',
   waterway: 'River',
   water: 'Water',
   green: 'Park',
@@ -862,6 +864,8 @@ function AssetsTab() {
   const select = useEditor((s) => s.select)
   const selection = useEditor((s) => s.selection)
   const [busy, setBusy] = useState(false)
+  const cropping = useEditor((s) => s.cropping)
+  const setCropping = useEditor((s) => s.setCropping)
 
   const urls = useBlobUrls(project.assets.map((a) => a.blobKey))
 
@@ -895,13 +899,35 @@ function AssetsTab() {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-1">
           <SectionLabel>Symbols and markers</SectionLabel>
-          <Button onClick={doImport} disabled={busy}>
-            <IconPlus size={13} />
-            {busy ? 'Adding…' : 'Add'}
-          </Button>
+          <div className="flex gap-1">
+            <Button
+              variant={cropping ? 'primary' : 'ghost'}
+              onClick={() => setCropping(!cropping)}
+              disabled={project.images.length === 0}
+              title={
+                project.images.length === 0
+                  ? 'Import a screenshot first'
+                  : 'Drag a box over the map view to cut a symbol out of it'
+              }
+            >
+              {cropping ? 'Drag a box…' : 'Crop'}
+            </Button>
+            <Button onClick={doImport} disabled={busy}>
+              <IconPlus size={13} />
+              {busy ? 'Adding…' : 'Add'}
+            </Button>
+          </div>
         </div>
+
+        {cropping && (
+          <p className="rounded-lg bg-slate-100 px-2.5 py-2 text-[11px] leading-relaxed text-slate-700">
+            Switch to the <strong>Map</strong> view and drag a box around what you want.
+            It is cut from the screenshots underneath, so it comes out whole even across
+            a seam between two stitched tiles.
+          </p>
+        )}
 
         {project.assets.length === 0 ? (
           <p className="px-1 text-[11px] leading-relaxed text-slate-400">
@@ -1244,7 +1270,9 @@ export function Inspector() {
 /** A traced shape: how it is filled, the rings cut out of it, and free text styling. */
 function TerrainInspector({ id }: { id: TerrainId }) {
   const project = useEditor((s) => s.project)!
+  const space = useEditor((s) => s.space)
   const updateTerrain = useEditor((s) => s.updateTerrain)
+  const addTerrainHole = useEditor((s) => s.addTerrainHole)
   const deleteTerrain = useEditor((s) => s.deleteTerrain)
   const t = project.terrain.find((x) => x.id === id)
   if (!t) return null
@@ -1356,9 +1384,10 @@ function TerrainInspector({ id }: { id: TerrainId }) {
               hint="A ring cut out of this shape — an island in a lake, a courtyard in a park."
             >
               <div className="flex items-center gap-2">
-                <span className="text-[12px] text-slate-600">
+                <span className="flex-1 text-[12px] text-slate-600">
                   {t.holes.length === 0 ? 'None' : `${t.holes.length} cut out`}
                 </span>
+                <Button onClick={() => addTerrainHole(id, space)}>Add</Button>
                 {t.holes.length > 0 && (
                   <Button onClick={() => updateTerrain(id, { holes: [] })}>Clear</Button>
                 )}

@@ -131,6 +131,77 @@ export async function importAssetFiles(files: File[]): Promise<Asset[]> {
 }
 
 /**
+ * Cut a rectangle out of the imported screenshots and keep it as an asset.
+ *
+ * This is the point of the whole asset system. The art you want -- a landmark, an
+ * airport glyph, a faction crest -- is already sitting in the project, traced under the
+ * network. Rather than asking someone to find the original file, crop it in another
+ * program and import the result, the region is composited straight off the layers that
+ * are already on screen.
+ *
+ * Every visible, unlocked layer overlapping the rectangle is drawn in project order, so
+ * a crop that straddles two stitched tiles comes out whole rather than clipped at the
+ * seam.
+ */
+export async function cropAssetFromImages(
+  layers: ImageLayer[],
+  rect: { x: number; y: number; width: number; height: number },
+  name: string,
+): Promise<Asset | null> {
+  const width = Math.round(rect.width)
+  const height = Math.round(rect.height)
+  if (width < 4 || height < 4) return null
+
+  const overlapping = layers.filter(
+    (l) =>
+      !l.hidden &&
+      l.x < rect.x + rect.width &&
+      l.x + l.width > rect.x &&
+      l.y < rect.y + rect.height &&
+      l.y + l.height > rect.y,
+  )
+  if (overlapping.length === 0) return null
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Could not get a 2D context to crop')
+
+  for (const layer of overlapping) {
+    const blob = await getBlob(layer.blobKey)
+    if (!blob) continue
+    const bitmap = await createImageBitmap(blob)
+    // The layer may be displayed at a different size than its natural pixels.
+    const sx = bitmap.width / layer.width
+    const sy = bitmap.height / layer.height
+    ctx.drawImage(
+      bitmap,
+      (rect.x - layer.x) * sx,
+      (rect.y - layer.y) * sy,
+      rect.width * sx,
+      rect.height * sy,
+      0,
+      0,
+      width,
+      height,
+    )
+    bitmap.close()
+  }
+
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Could not encode the crop'))),
+      'image/png',
+    ),
+  )
+
+  const blobKey = newBlobKey()
+  await putBlob(blobKey, blob)
+  return { id: newAssetId(), name, blobKey, width, height, source: 'crop' }
+}
+
+/**
  * Import several files at once, laid out left to right in a rough grid so nothing
  * lands exactly on top of anything else before you start arranging.
  */

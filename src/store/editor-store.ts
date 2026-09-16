@@ -148,6 +148,11 @@ interface EditorState {
   activeBranchId: string | null
   /** True while Alt is held; suspends snapping without changing the settings. */
   snapSuspended: boolean
+  /**
+   * Armed by the asset panel. The next marquee drag on the geographic view cuts a
+   * symbol out of the screenshots instead of selecting anything.
+   */
+  cropping: boolean
   /** Which kind of shape the terrain tool will draw next. */
   terrainKind: TerrainKind
   /** Journey planner endpoints and result. Not undoable — it describes no edit. */
@@ -176,6 +181,7 @@ interface EditorState {
   setSpace: (s: Space) => void
   setTool: (t: Tool) => void
   setSnapSuspended: (v: boolean) => void
+  setCropping: (v: boolean) => void
   setTerrainKind: (k: TerrainKind) => void
   setRouteEnd: (which: 'from' | 'to', id: StationId | null) => void
   setRoutePick: (which: 'from' | 'to' | null) => void
@@ -268,6 +274,14 @@ interface EditorState {
   /** Add a vertex partway along a shape's edge, keeping both spaces aligned. */
   insertTerrainPoint: (id: TerrainId, index: number, pos: Vec2, space: Space) => void
   removeTerrainPoint: (id: TerrainId, index: number) => void
+  /**
+   * Punch a hole in a closed shape.
+   *
+   * The ring is seeded as a rectangle in the middle of the shape's own bounds rather
+   * than asking for a second trace: it lands somewhere visible, and the existing vertex
+   * handles reshape it from there.
+   */
+  addTerrainHole: (id: TerrainId, space: Space) => void
   simplifyTerrain: (id: TerrainId, epsilon: number) => void
   resetTerrainToGeographic: (ids: TerrainId[]) => void
 
@@ -325,6 +339,7 @@ export const useEditor = create<EditorState>((set, get) => {
     activeLineId: null,
     activeBranchId: null,
     snapSuspended: false,
+    cropping: false,
     terrainKind: 'waterway',
     routeFrom: null,
     routeTo: null,
@@ -437,6 +452,7 @@ export const useEditor = create<EditorState>((set, get) => {
     setSpace: (s) => set({ space: s }),
     setTool: (t) => set({ tool: t }),
     setSnapSuspended: (v) => set({ snapSuspended: v }),
+    setCropping: (v) => set({ cropping: v }),
     setTerrainKind: (k) => set({ terrainKind: k }),
 
     setRouteEnd: (which, id) => {
@@ -939,6 +955,27 @@ export const useEditor = create<EditorState>((set, get) => {
 
         t[space].splice(index + 1, 0, { ...pos })
         t[other].splice(index + 1, 0, mid)
+      }),
+
+    addTerrainHole: (id, space) =>
+      get().mutate('Add hole', (d) => {
+        const t = d.terrain.find((x) => x.id === id)
+        if (!t || !t.closed) return
+        const pts = t[space]
+        if (pts.length < 3) return
+        const xs = pts.map((q) => q.x)
+        const ys = pts.map((q) => q.y)
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+        const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+        const w = (Math.max(...xs) - Math.min(...xs)) * 0.22
+        const h = (Math.max(...ys) - Math.min(...ys)) * 0.22
+        const ring = [
+          { x: cx - w, y: cy - h },
+          { x: cx + w, y: cy - h },
+          { x: cx + w, y: cy + h },
+          { x: cx - w, y: cy + h },
+        ]
+        t.holes.push({ geo: ring.map((q) => ({ ...q })), schematic: ring.map((q) => ({ ...q })) })
       }),
 
     removeTerrainPoint: (id, index) =>
