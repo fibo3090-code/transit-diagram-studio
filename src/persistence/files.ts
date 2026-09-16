@@ -6,9 +6,9 @@
  * ways that are hard to diagnose, so we cap here rather than let it surprise you later.
  */
 
-import { newImageId, newBlobKey } from '../domain/ids'
+import { newAssetId, newImageId, newBlobKey } from '../domain/ids'
 import { normalizeProject } from '../domain/migrate'
-import type { ImageLayer, Project, ProjectFile } from '../domain/types'
+import type { Asset, ImageLayer, Project, ProjectFile } from '../domain/types'
 import { PROJECT_VERSION } from '../domain/types'
 import { getBlob, putBlob } from './idb'
 
@@ -77,6 +77,57 @@ export async function importImageFile(
       placedBy: 'manual',
     },
   }
+}
+
+/** Symbols are drawn small. Anything larger is wasted bytes on every save. */
+export const MAX_ASSET_EDGE = 512
+
+/**
+ * Read files into library assets.
+ *
+ * Separate from image import because the two want different things: a screenshot is
+ * traced over at 4096px and never drawn small, while an asset is a mark placed at
+ * roughly stop size. Capping assets far lower keeps a project with fifty markers from
+ * carrying fifty full-resolution pictures.
+ */
+export async function importAssetFiles(files: File[]): Promise<Asset[]> {
+  const out: Asset[] = []
+  for (const file of files) {
+    const bitmap = await decode(file)
+    const scale = Math.min(1, MAX_ASSET_EDGE / Math.max(bitmap.width, bitmap.height))
+    const width = Math.max(1, Math.round(bitmap.width * scale))
+    const height = Math.max(1, Math.round(bitmap.height * scale))
+
+    let blob: Blob = file
+    if (scale < 1) {
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Could not get a 2D context to resize the asset')
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(bitmap, 0, 0, width, height)
+      blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('Could not encode the asset'))),
+          'image/png',
+        ),
+      )
+    }
+    bitmap.close()
+
+    const blobKey = newBlobKey()
+    await putBlob(blobKey, blob)
+    out.push({
+      id: newAssetId(),
+      name: file.name.replace(/\.[^.]+$/, ''),
+      blobKey,
+      width,
+      height,
+      source: 'import',
+    })
+  }
+  return out
 }
 
 /**

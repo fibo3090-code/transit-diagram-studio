@@ -1250,14 +1250,24 @@ function RouteBullet({
   switch (shape) {
     case 'circle':
       return <circle r={r} fill={color} />
-    case 'roundel':
-      // A bar across a ring: the mark reads at a glance even at poster distance.
+    case 'roundel': {
+      // A bar across a ring. The bar has to clear the text that sits on it, so it is
+      // sized from the mark's height rather than from the ring -- an earlier version
+      // derived it from the ring radius and produced a 6px bar under 11px type, which
+      // swallowed every line name on the map.
+      const ring = h * 0.62
+      const bar = h * 0.62
+      // The bar has to reach PAST the ring or the mark reads as a plain disc -- which
+      // is what a two-character line name produced, since its label is narrower than
+      // the ring is wide.
+      const span = Math.max(w, ring * 2.7)
       return (
         <g>
-          <circle r={r} fill="none" stroke={color} strokeWidth={r * 0.46} />
-          <rect x={-w / 2} y={-r * 0.34} width={w} height={r * 0.68} fill={color} />
+          <circle r={ring} fill="none" stroke={color} strokeWidth={ring * 0.4} />
+          <rect x={-span / 2} y={-bar / 2} width={span} height={bar} fill={color} />
         </g>
       )
+    }
     case 'square':
       return <rect x={-r} y={-r} width={r * 2} height={r * 2} fill={color} />
     case 'diamond':

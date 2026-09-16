@@ -82,9 +82,14 @@ const IMAGE_SNAP = 14
 
 export function MapView() {
   const svgRef = useRef<SVGSVGElement | null>(null)
-  // One automatic fit per mounted project, never again -- refitting mid-edit would
-  // yank the view out from under whatever is being dragged.
-  const fittedRef = useRef(false)
+  // The view keeps refitting until the reader first moves it themselves.
+  //
+  // A single fit on mount is not enough: the surface is measured before the side
+  // panels have taken their width, so the zoom is computed for a canvas wider than the
+  // one that ends up on screen, and the map spills under the inspector. Refitting on
+  // every size change until the first manual move fixes that without ever yanking the
+  // view out from under someone who has started composing.
+  const userMovedRef = useRef(false)
   const project = useEditor((s) => s.project)
   const space = useEditor((s) => s.space)
   const tool = useEditor((s) => s.tool)
@@ -162,6 +167,7 @@ export function MapView() {
       const cy = e.clientY - rect.top
       const factor = Math.exp(-e.deltaY * 0.0015)
       const zoom = Math.min(8, Math.max(0.02, viewport.zoom * factor))
+      userMovedRef.current = true
       setViewport(space, {
         zoom,
         x: cx - ((cx - viewport.x) / viewport.zoom) * zoom,
@@ -199,14 +205,16 @@ export function MapView() {
         y: size.h / 2 - (b.minY + height / 2) * zoom,
       })
     }
-    const onFit = (e: Event) => fit((e as CustomEvent).detail === 'selection' ? 'selection' : 'all')
+    const onFit = (e: Event) => {
+      userMovedRef.current = true
+      fit((e as CustomEvent).detail === 'selection' ? 'selection' : 'all')
+    }
     window.addEventListener('tds:fit', onFit)
 
     // Fit once, as soon as there is a project and a measured surface to fit it into.
     // Opening a map clipped and expecting the reader to know about the F key is a poor
     // first impression of a tool whose whole output is a picture.
-    if (!fittedRef.current && project && project.stations.length > 0 && size.w > 1 && size.h > 1) {
-      fittedRef.current = true
+    if (!userMovedRef.current && project && project.stations.length > 0 && size.w > 1 && size.h > 1) {
       fit('all')
     }
 
@@ -603,6 +611,7 @@ export function MapView() {
 
     switch (gesture.kind) {
       case 'pan':
+        userMovedRef.current = true
         setViewport(space, {
           x: gesture.startVp.x + (e.clientX - gesture.startClient.x),
           y: gesture.startVp.y + (e.clientY - gesture.startClient.y),

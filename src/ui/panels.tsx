@@ -12,24 +12,33 @@ import type {
   TerrainKind,
 } from '../domain/types'
 import { summarizeIssues, validateProject } from '../domain/validate'
-import { downloadText, importImageFiles, pickFiles } from '../persistence/files'
+import { downloadText, importAssetFiles, importImageFiles, pickFiles } from '../persistence/files'
 import { requestFit } from '../render/MapView'
 import { networkOf, useEditor, type Tool } from '../store/editor-store'
+import { contentBounds } from '../export/exporters'
+import { useBlobUrls } from '../render/layers'
+import {
+  FloatingTools,
+  MODES,
+  MenuItem,
+  OverflowMenu,
+  PanelHeader,
+  ToolTile,
+  type Density,
+  type Mode,
+  type Theme,
+} from './shell'
 import {
   IconBend,
   IconBranch,
   IconCheck,
   IconCursor,
-  IconData,
   IconDiagram,
   IconExport,
   IconEye,
   IconEyeOff,
-  IconFit,
   IconGlobe,
   IconHand,
-  IconHelp,
-  IconLayers,
   IconLine,
   IconMagnet,
   IconPlus,
@@ -43,7 +52,6 @@ import {
 } from './icons'
 import {
   Button,
-  Divider,
   EmptyState,
   Field,
   IconButton,
@@ -54,7 +62,6 @@ import {
   Segmented,
   Slider,
   Toggle,
-  ToolButton,
   inputClass,
 } from './primitives'
 
@@ -92,16 +99,97 @@ const SNAPS: { id: SnapKind; label: string; hint: string }[] = [
   { id: 'spacing', label: 'Even spacing', hint: 'Match the gap to the previous stop' },
 ]
 
-export function Toolbar({ onExport, onHelp }: { onExport: () => void; onHelp: () => void }) {
+/**
+ * The tools, floating over the canvas.
+ *
+ * Moved out of the top bar, where six labelled buttons occupied a 64px band across the
+ * full width and left no room for Export at common laptop widths. Vertical and icon-only
+ * costs a sliver of canvas, and it scales: terrain kinds, asset placing and pass-through
+ * marking all need a home, and a labelled horizontal row had none to give.
+ */
+export function ToolPalette() {
+  const project = useEditor((s) => s.project)
+  const tool = useEditor((s) => s.tool)
+  const setTool = useEditor((s) => s.setTool)
+  const setSnap = useEditor((s) => s.setSnap)
+  const snapSuspended = useEditor((s) => s.snapSuspended)
+  const [snapOpen, setSnapOpen] = useState(false)
+  if (!project) return null
+
+  const activeSnaps = SNAPS.filter((s) => project.snap[s.id]).length
+
+  return (
+    <FloatingTools>
+      {TOOLS.map((t, i) => (
+        <ToolTile
+          key={t.id}
+          active={tool === t.id}
+          label={t.label}
+          shortcut={['V', 'S', 'L', 'T', 'B', 'H'][i]}
+          onClick={() => setTool(t.id)}
+        >
+          {t.icon}
+        </ToolTile>
+      ))}
+
+      <div className="my-0.5 h-px bg-slate-200" />
+
+      <div className="relative">
+        <ToolTile
+          active={snapOpen}
+          label={`Snapping — ${activeSnaps} of ${SNAPS.length} on${snapSuspended ? ', held off' : ''}`}
+          shortcut="hold Alt to suspend"
+          onClick={() => setSnapOpen((v) => !v)}
+        >
+          <span className={snapSuspended ? 'opacity-40' : undefined}>
+            <IconMagnet size={17} />
+          </span>
+        </ToolTile>
+        {snapOpen && (
+          <div className="absolute left-11 top-0 z-20 w-64 rounded-xl border border-slate-200 bg-white p-2.5 shadow-xl">
+            <SectionLabel>Snapping</SectionLabel>
+            <div className="mt-1.5 space-y-1">
+              {SNAPS.map((sn) => (
+                <Toggle
+                  key={sn.id}
+                  label={sn.label}
+                  hint={sn.hint}
+                  checked={project.snap[sn.id]}
+                  onChange={(v) => setSnap({ [sn.id]: v })}
+                />
+              ))}
+            </div>
+            <p className="mt-2 border-t border-slate-200 pt-2 text-[11px] text-slate-500">
+              Hold <Kbd>Alt</Kbd> to suspend all of it for one move.
+            </p>
+          </div>
+        )}
+      </div>
+    </FloatingTools>
+  )
+}
+
+export function Toolbar({
+  onExport,
+  onHelp,
+  theme,
+  density,
+  onTheme,
+  onDensity,
+}: {
+  onExport: () => void
+  onHelp: () => void
+  theme: Theme
+  density: Density
+  onTheme: (t: Theme) => void
+  onDensity: (d: Density) => void
+}) {
   const project = useEditor((s) => s.project)
   const space = useEditor((s) => s.space)
   const tool = useEditor((s) => s.tool)
   const dirty = useEditor((s) => s.dirty)
-  const snapSuspended = useEditor((s) => s.snapSuspended)
   const terrainKind = useEditor((s) => s.terrainKind)
   const setSpace = useEditor((s) => s.setSpace)
-  const setTool = useEditor((s) => s.setTool)
-  const setSnap = useEditor((s) => s.setSnap)
   const setTerrainKind = useEditor((s) => s.setTerrainKind)
   const renameProject = useEditor((s) => s.renameProject)
   const undo = useEditor((s) => s.undo)
@@ -110,19 +198,21 @@ export function Toolbar({ onExport, onHelp }: { onExport: () => void; onHelp: ()
   const future = useEditor((s) => s.future)
 
   if (!project) return null
-  const activeSnaps = SNAPS.filter((s) => project.snap[s.id]).length
 
   return (
     <header className="z-30 shrink-0 border-b border-slate-200 bg-white">
-      <div className="flex items-center gap-2 px-3 py-2">
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        {/*
+          The title grows into whatever room is left rather than sitting at a fixed
+          160px, where "Aldbury — example network" was clipped to "example n".
+        */}
         <input
           value={project.name}
           onChange={(e) => renameProject(e.target.value)}
-          className="w-40 shrink-0 rounded-md border border-transparent px-2 py-1 text-sm font-semibold text-slate-900 hover:border-slate-200 focus:border-slate-900 focus:outline-none"
+          className="min-w-24 flex-1 rounded-md border border-transparent px-2 py-1 text-sm font-semibold text-slate-900 hover:border-slate-200 focus:border-slate-900 focus:outline-none"
           aria-label="Project name"
+          title={project.name}
         />
-
-        <Divider />
 
         <Segmented
           value={space}
@@ -133,77 +223,8 @@ export function Toolbar({ onExport, onHelp }: { onExport: () => void; onHelp: ()
           ]}
         />
 
-        <Divider />
-
-        <div className="flex items-center gap-0.5">
-          {TOOLS.map((t) => (
-            <ToolButton
-              key={t.id}
-              label={t.label}
-              hint={t.hint}
-              icon={t.icon}
-              active={tool === t.id}
-              onClick={() => setTool(t.id)}
-            />
-          ))}
-        </div>
-
-        <Divider />
-
-        <Popover
-          width="w-72"
-          trigger={({ open, toggle }) => (
-            <button
-              onClick={toggle}
-              aria-expanded={open}
-              title="Snapping options"
-              className={`inline-flex h-9 items-center gap-2 rounded-lg px-2.5 text-xs font-medium transition-colors ${
-                snapSuspended
-                  ? 'bg-amber-100 text-amber-900'
-                  : open
-                    ? 'bg-slate-100 text-slate-900'
-                    : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <IconMagnet size={16} />
-              {snapSuspended ? 'Snapping off' : `Snapping ${activeSnaps}/${SNAPS.length}`}
-            </button>
-          )}
-        >
-          <div className="space-y-2.5">
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              Guides come from the stations a stop connects to. Hold <Kbd>Alt</Kbd> while
-              dragging to place something exactly where the cursor is.
-            </p>
-            <div className="space-y-1 border-t border-slate-200 pt-2.5">
-              {SNAPS.map((s) => (
-                <Toggle
-                  key={s.id}
-                  label={s.label}
-                  hint={s.hint}
-                  checked={project.snap[s.id]}
-                  onChange={(v) => setSnap({ [s.id]: v })}
-                />
-              ))}
-            </div>
-            <div className="border-t border-slate-200 pt-2.5">
-              <Slider
-                label="Grid pitch"
-                value={project.snap.gridSize}
-                min={5}
-                max={60}
-                step={5}
-                onChange={(v) => setSnap({ gridSize: v })}
-              />
-            </div>
-          </div>
-        </Popover>
-
-        <div className="ml-auto flex items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5">
           <HealthChip />
-          <IconButton label="Zoom to fit (F)" size="md" onClick={() => requestFit('all')}>
-            <IconFit size={16} />
-          </IconButton>
           <IconButton label="Undo (Ctrl+Z)" size="md" disabled={past.length === 0} onClick={undo}>
             <IconUndo size={16} />
           </IconButton>
@@ -215,17 +236,39 @@ export function Toolbar({ onExport, onHelp }: { onExport: () => void; onHelp: ()
           >
             <IconRedo size={16} />
           </IconButton>
-          <IconButton label="Keyboard shortcuts (?)" size="md" onClick={onHelp}>
-            <IconHelp size={16} />
-          </IconButton>
+
+          <OverflowMenu label="More">
+            {(close) => (
+              <>
+                <MenuItem hint="F" onClick={() => { requestFit('all'); close() }}>
+                  Zoom to fit
+                </MenuItem>
+                <MenuItem hint="?" onClick={() => { onHelp(); close() }}>
+                  Keyboard shortcuts
+                </MenuItem>
+                <div className="my-1 border-t border-slate-200" />
+                <MenuItem
+                  onClick={() => onTheme(theme === 'dark' ? 'light' : 'dark')}
+                >
+                  {theme === 'dark' ? 'Light editor' : 'Dark editor'}
+                </MenuItem>
+                <MenuItem
+                  onClick={() => onDensity(density === 'compact' ? 'comfortable' : 'compact')}
+                >
+                  {density === 'compact' ? 'Comfortable spacing' : 'Compact spacing'}
+                </MenuItem>
+              </>
+            )}
+          </OverflowMenu>
 
           <span
-            className="ml-1 mr-1 w-11 shrink-0 text-right font-mono text-[10px] text-slate-400"
+            className="mx-0.5 w-10 shrink-0 text-right font-mono text-[10px] text-slate-400"
             title={dirty ? 'Saving to this browser' : 'Saved to this browser'}
           >
             {dirty ? 'saving' : 'saved'}
           </span>
 
+          {/* Never optional, never collapsed, never clipped. */}
           <Button variant="primary" size="md" onClick={onExport}>
             <IconExport size={15} />
             Export
@@ -236,7 +279,7 @@ export function Toolbar({ onExport, onHelp }: { onExport: () => void; onHelp: ()
       {tool === 'terrain' && (
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50 px-3 py-1.5">
           <SectionLabel>Tracing</SectionLabel>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {TERRAIN_KINDS.map((k) => (
               <button
                 key={k.id}
@@ -330,48 +373,46 @@ function HealthChip() {
 // Left panel
 // ---------------------------------------------------------------------------
 
-type Tab = 'lines' | 'stations' | 'layers' | 'route' | 'data'
 
-const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: 'lines', label: 'Lines', icon: <IconLine size={14} /> },
-  { id: 'stations', label: 'Stops', icon: <IconStation size={14} /> },
-  { id: 'layers', label: 'Layers', icon: <IconLayers size={14} /> },
-  { id: 'route', label: 'Route', icon: <IconBranch size={14} /> },
-  { id: 'data', label: 'Data', icon: <IconData size={14} /> },
-]
-
-export function LeftPanel() {
-  const [tab, setTab] = useState<Tab>('lines')
+/**
+ * The list for whatever mode the rail is on.
+ *
+ * Replaces a five-tab strip that was already overlapping its own labels at 1280px and
+ * had no room for the modes this release adds. The rail owns the switching now; this
+ * just renders the right list and a heading that says where you are.
+ */
+export function Browser({ mode }: { mode: Mode }) {
+  // Lines and stops are two views of one subject, so they share a mode rather than
+  // competing for a slot on the rail.
+  const [netView, setNetView] = useState<'lines' | 'stops'>('lines')
   const project = useEditor((s) => s.project)
   if (!project) return null
+  const meta = MODES.find((m) => m.id === mode)!
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <div className="flex shrink-0 gap-0.5 border-b border-slate-200 p-1.5">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            aria-pressed={tab === t.id}
-            className={`flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-medium transition-colors ${
-              tab === t.id
-                ? 'bg-slate-900 text-white'
-                : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-            }`}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
+    <>
+      <PanelHeader title={meta.label}>
+        {mode === 'network' && (
+          <Segmented
+            value={netView}
+            onChange={(v) => setNetView(v as 'lines' | 'stops')}
+            options={[
+              { value: 'lines', label: 'Lines' },
+              { value: 'stops', label: 'Stops' },
+            ]}
+          />
+        )}
+      </PanelHeader>
+      <div className="tds-scroll flex-1 overflow-y-auto p-3">
+        {mode === 'network' && (netView === 'lines' ? <LinesTab /> : <StationsTab />)}
+        {mode === 'terrain' && <LayersTab />}
+        {mode === 'images' && <ImagesTab />}
+        {mode === 'assets' && <AssetsTab />}
+        {mode === 'route' && <RouteTab />}
+        {mode === 'data' && <DataTab />}
+        {mode === 'checks' && <ChecksTab />}
       </div>
-      <div className="flex-1 overflow-y-auto p-3">
-        {tab === 'lines' && <LinesTab />}
-        {tab === 'stations' && <StationsTab />}
-        {tab === 'layers' && <LayersTab />}
-        {tab === 'route' && <RouteTab />}
-        {tab === 'data' && <DataTab />}
-      </div>
-    </aside>
+    </>
   )
 }
 
@@ -578,6 +619,7 @@ const TERRAIN_LABEL: Record<string, string> = {
   label: 'Text',
 }
 
+/** Terrain: rivers, parks, zones and free text. */
 function LayersTab() {
   const project = useEditor((s) => s.project)!
   const space = useEditor((s) => s.space)
@@ -588,6 +630,101 @@ function LayersTab() {
   const deleteTerrain = useEditor((s) => s.deleteTerrain)
   const simplifyTerrain = useEditor((s) => s.simplifyTerrain)
   const resetTerrain = useEditor((s) => s.resetTerrainToGeographic)
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <SectionLabel>Terrain</SectionLabel>
+          <Button onClick={() => setTool('terrain')}>
+            <IconPlus size={13} />
+            Trace
+          </Button>
+        </div>
+
+        {project.terrain.length === 0 ? (
+          <p className="px-1 text-[11px] leading-relaxed text-slate-400">
+            Trace the river and coast over your screenshots, then simplify them into
+            straight strokes for the diagram.
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {project.terrain.map((t) => {
+              const isSel = selection.terrain.includes(t.id)
+              return (
+                <li
+                  key={t.id}
+                  className={`rounded-lg border p-2 ${
+                    isSel ? 'border-slate-900 bg-slate-50' : 'border-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => select({ terrain: [t.id] })}
+                      className="min-w-0 flex-1 truncate text-left text-[12px] font-medium text-slate-800"
+                    >
+                      {t.name || TERRAIN_LABEL[t.kind] || t.kind}
+                    </button>
+                    <IconButton
+                      label={t.hidden ? 'Show' : 'Hide'}
+                      onClick={() => updateTerrain(t.id, { hidden: !t.hidden })}
+                    >
+                      {t.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+                    </IconButton>
+                    <IconButton
+                      label="Delete shape"
+                      variant="danger"
+                      onClick={() => deleteTerrain([t.id])}
+                    >
+                      <IconTrash size={13} />
+                    </IconButton>
+                  </div>
+                  <p className="mt-0.5 font-mono text-[10px] text-slate-400">
+                    {TERRAIN_LABEL[t.kind] ?? t.kind} · {t.geo.length} traced ·{' '}
+                    {t.schematic.length} on diagram
+                  </p>
+                  {isSel && (
+                    <div className="mt-2 space-y-2">
+                      <input
+                        value={t.name}
+                        onChange={(e) => updateTerrain(t.id, { name: e.target.value })}
+                        placeholder="Name, e.g. River Ald"
+                        className={inputClass}
+                      />
+                      {space === 'schematic' ? (
+                        <div className="flex flex-wrap gap-1">
+                          <Button onClick={() => simplifyTerrain(t.id, 8)}>Simplify</Button>
+                          <Button onClick={() => simplifyTerrain(t.id, 30)}>Simplify hard</Button>
+                          <Button variant="quiet" onClick={() => resetTerrain([t.id])}>
+                            Reset
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] leading-relaxed text-slate-500">
+                          Switch to the diagram to simplify this into straight strokes.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The screenshots being traced.
+ *
+ * Split out of the terrain panel, which used to hold both. They are different jobs --
+ * one is the source material, the other is what you draw over it -- and sharing a tab
+ * meant whichever you wanted was half a scroll away from whichever you did not.
+ */
+function ImagesTab() {
+  const project = useEditor((s) => s.project)!
   const addImage = useEditor((s) => s.addImage)
   const updateImage = useEditor((s) => s.updateImage)
   const deleteImages = useEditor((s) => s.deleteImages)
@@ -688,87 +825,216 @@ function LayersTab() {
           </ul>
         )}
       </div>
+    </div>
+  )
+}
 
-      <div className="space-y-2 border-t border-slate-200 pt-3">
+/**
+ * The asset library.
+ *
+ * Its whole reason for existing is that the source art is already in the project. A
+ * landmark, an airport glyph or a faction crest can be cropped out of an imported
+ * screenshot and reused, instead of being approximated with one of five built-in
+ * shapes.
+ */
+function AssetsTab() {
+  const project = useEditor((s) => s.project)!
+  const space = useEditor((s) => s.space)
+  const addAsset = useEditor((s) => s.addAsset)
+  const renameAsset = useEditor((s) => s.renameAsset)
+  const deleteAsset = useEditor((s) => s.deleteAsset)
+  const addPlacement = useEditor((s) => s.addPlacement)
+  const deletePlacements = useEditor((s) => s.deletePlacements)
+  const select = useEditor((s) => s.select)
+  const selection = useEditor((s) => s.selection)
+  const [busy, setBusy] = useState(false)
+
+  const urls = useBlobUrls(project.assets.map((a) => a.blobKey))
+
+  const doImport = async () => {
+    const files = await pickFiles('image/*', true)
+    if (files.length === 0) return
+    setBusy(true)
+    try {
+      for (const a of await importAssetFiles(files)) addAsset(a)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Dropped at the middle of nowhere in particular; the map is panned, so a fixed
+  // origin would often land off-screen. Centre of the current content is close enough
+  // and always reachable.
+  const dropAt = () => {
+    const b = contentBounds(project, space, 0)
+    return { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 }
+  }
+
+  const FURNITURE = [
+    { kind: 'legend', label: 'Legend', hint: 'Derived from the lines, so it cannot go stale' },
+    { kind: 'titleBlock', label: 'Title block', hint: 'Name and a count of what is on the map' },
+    { kind: 'northArrow', label: 'North arrow', hint: 'For the geographic view' },
+    { kind: 'scaleBar', label: 'Scale bar', hint: 'Two bands with end labels' },
+    { kind: 'frame', label: 'Frame', hint: 'A double border around the whole poster' },
+  ] as const
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <SectionLabel>Terrain</SectionLabel>
-          <Button onClick={() => setTool('terrain')}>
+          <SectionLabel>Symbols and markers</SectionLabel>
+          <Button onClick={doImport} disabled={busy}>
             <IconPlus size={13} />
-            Trace
+            {busy ? 'Adding…' : 'Add'}
           </Button>
         </div>
 
-        {project.terrain.length === 0 ? (
+        {project.assets.length === 0 ? (
           <p className="px-1 text-[11px] leading-relaxed text-slate-400">
-            Trace the river and coast over your screenshots, then simplify them into
-            straight strokes for the diagram.
+            Nothing here yet. Add an image to use it as a station symbol or drop it on the
+            map as a marker.
           </p>
         ) : (
-          <ul className="space-y-1.5">
-            {project.terrain.map((t) => {
-              const isSel = selection.terrain.includes(t.id)
+          <ul className="grid grid-cols-3 gap-2">
+            {project.assets.map((a) => (
+              <li key={a.id} className="tds-row rounded-xl border border-slate-200 p-1.5">
+                <div className="flex h-12 items-center justify-center overflow-hidden rounded-lg bg-slate-50">
+                  {urls[a.blobKey] ? (
+                    <img src={urls[a.blobKey]} alt={a.name} className="max-h-11 max-w-full" />
+                  ) : (
+                    <span className="text-[10px] text-slate-400">…</span>
+                  )}
+                </div>
+                <input
+                  value={a.name}
+                  onChange={(e) => renameAsset(a.id, e.target.value)}
+                  className="mt-1 w-full rounded border border-transparent px-1 text-[11px] text-slate-700 hover:border-slate-200 focus:border-slate-900 focus:outline-none"
+                  aria-label="Asset name"
+                />
+                <div className="tds-row-actions mt-1 flex justify-between">
+                  <button
+                    onClick={() => addPlacement({ kind: 'asset', assetId: a.id }, dropAt(), space)}
+                    className="rounded px-1 text-[10px] text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                  >
+                    Place
+                  </button>
+                  <IconButton label="Delete asset" variant="danger" onClick={() => deleteAsset(a.id)}>
+                    <IconTrash size={12} />
+                  </IconButton>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="space-y-2 border-t border-slate-200 pt-3">
+        <SectionLabel>Map furniture</SectionLabel>
+        <div className="grid grid-cols-2 gap-1.5">
+          {FURNITURE.map((f) => (
+            <button
+              key={f.kind}
+              onClick={() => addPlacement({ kind: f.kind }, dropAt(), space)}
+              title={f.hint}
+              className="rounded-lg border border-slate-200 px-2 py-1.5 text-left text-[11.5px] font-medium text-slate-700 hover:border-slate-900 hover:text-slate-900"
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {project.placements.length > 0 && (
+        <div className="space-y-2 border-t border-slate-200 pt-3">
+          <SectionLabel>On the map</SectionLabel>
+          <ul className="space-y-1">
+            {project.placements.map((pl) => {
+              const name =
+                pl.what.kind === 'asset'
+                  ? (project.assets.find((a) => pl.what.kind === 'asset' && a.id === pl.what.assetId)
+                      ?.name ?? 'Marker')
+                  : FURNITURE.find((f) => f.kind === pl.what.kind)?.label ?? pl.what.kind
+              const sel = selection.placements.includes(pl.id)
               return (
                 <li
-                  key={t.id}
-                  className={`rounded-lg border p-2 ${
-                    isSel ? 'border-slate-900 bg-slate-50' : 'border-slate-200'
-                  }`}
+                  key={pl.id}
+                  className={`tds-row flex items-center gap-1 rounded-lg px-2 py-1 ${sel ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => select({ terrain: [t.id] })}
-                      className="min-w-0 flex-1 truncate text-left text-[12px] font-medium text-slate-800"
-                    >
-                      {t.name || TERRAIN_LABEL[t.kind] || t.kind}
-                    </button>
+                  <button
+                    onClick={() => select({ placements: [pl.id] })}
+                    className="flex-1 truncate text-left text-[12px] text-slate-700"
+                  >
+                    {name}
+                  </button>
+                  <div className="tds-row-actions flex">
                     <IconButton
-                      label={t.hidden ? 'Show' : 'Hide'}
-                      onClick={() => updateTerrain(t.id, { hidden: !t.hidden })}
-                    >
-                      {t.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
-                    </IconButton>
-                    <IconButton
-                      label="Delete shape"
+                      label="Delete"
                       variant="danger"
-                      onClick={() => deleteTerrain([t.id])}
+                      onClick={() => deletePlacements([pl.id])}
                     >
-                      <IconTrash size={13} />
+                      <IconTrash size={12} />
                     </IconButton>
                   </div>
-                  <p className="mt-0.5 font-mono text-[10px] text-slate-400">
-                    {TERRAIN_LABEL[t.kind] ?? t.kind} · {t.geo.length} traced ·{' '}
-                    {t.schematic.length} on diagram
-                  </p>
-                  {isSel && (
-                    <div className="mt-2 space-y-2">
-                      <input
-                        value={t.name}
-                        onChange={(e) => updateTerrain(t.id, { name: e.target.value })}
-                        placeholder="Name, e.g. River Ald"
-                        className={inputClass}
-                      />
-                      {space === 'schematic' ? (
-                        <div className="flex flex-wrap gap-1">
-                          <Button onClick={() => simplifyTerrain(t.id, 8)}>Simplify</Button>
-                          <Button onClick={() => simplifyTerrain(t.id, 30)}>Simplify hard</Button>
-                          <Button variant="quiet" onClick={() => resetTerrain([t.id])}>
-                            Reset
-                          </Button>
-                        </div>
-                      ) : (
-                        <p className="text-[11px] leading-relaxed text-slate-500">
-                          Switch to the diagram to simplify this into straight strokes.
-                        </p>
-                      )}
-                    </div>
-                  )}
                 </li>
               )
             })}
           </ul>
-        )}
-      </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+/**
+ * Everything the validator found, as a list you can click through.
+ *
+ * The checker already produced structured issues with titles; they were only ever
+ * summarised as a count in the toolbar, so the one thing you wanted -- to be taken to
+ * the offending object -- was the one thing it would not do.
+ */
+function ChecksTab() {
+  const project = useEditor((s) => s.project)!
+  const select = useEditor((s) => s.select)
+  const network = networkOf(project)
+  const issues = validateProject(project, network)
+  void network
+
+  if (issues.length === 0) {
+    return (
+      <EmptyState
+        title="Nothing looks wrong"
+        body="Unnamed stops, duplicate names, lines with one stop and stations sitting on top of each other would all show up here."
+      />
+    )
+  }
+
+  const TONE: Record<string, string> = {
+    error: 'border-red-200 bg-red-50 text-red-900',
+    warning: 'border-amber-200 bg-amber-50 text-amber-900',
+    info: 'border-slate-200 bg-slate-50 text-slate-700',
+  }
+
+  return (
+    <ul className="space-y-1.5">
+      {issues.map((issue, i) => (
+        <li key={i}>
+          <button
+            onClick={() => {
+              if (issue.stationIds?.length) select({ stations: issue.stationIds })
+              else if (issue.lineIds?.length) select({ lines: issue.lineIds })
+            }}
+            className={`w-full rounded-xl border px-2.5 py-2 text-left ${TONE[issue.severity] ?? TONE.info}`}
+          >
+            <span className="block text-[12px] font-semibold">{issue.title}</span>
+            {issue.detail && (
+              <span className="mt-0.5 block text-[11px] leading-relaxed opacity-80">
+                {issue.detail}
+              </span>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -946,23 +1212,43 @@ export function Inspector() {
   )
 }
 
+/**
+ * What the inspector says when nothing is chosen.
+ *
+ * It used to carry the whole map-style panel too, which meant restyling the map
+ * required deselecting first -- the settings vanished the instant you clicked
+ * anything. Style now lives in its own always-present panel below; this is just the
+ * prompt.
+ */
 function NothingSelected() {
-  const project = useEditor((s) => s.project)!
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-3">
+      <p className="text-[12px] font-semibold text-slate-800">Nothing selected</p>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-slate-500">
+        Click a station or a line on the map to edit it. Drag on empty space to select
+        several at once.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * How the map looks. Always visible, whatever is selected.
+ */
+export function MapStylePanel() {
+  const project = useEditor((s) => s.project)
   const setStyle = useEditor((s) => s.setStyle)
   const setView = useEditor((s) => s.setView)
   const applyPreset = useEditor((s) => s.applyStylePreset)
   const space = useEditor((s) => s.space)
+  void space
+
+  // The panel mounts with the frame, which can be a tick ahead of the project landing
+  // in the store. Asserting non-null here took the whole editor down with it.
+  if (!project) return null
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl bg-slate-50 px-3 py-3">
-        <p className="text-[12px] font-semibold text-slate-800">Nothing selected</p>
-        <p className="mt-1 text-[11.5px] leading-relaxed text-slate-500">
-          Click a station or a line on the map to edit it. Drag on empty space to select
-          several at once.
-        </p>
-      </div>
-
       <Section title="Look of the map" defaultOpen>
         <Field label="Preset">
           <select

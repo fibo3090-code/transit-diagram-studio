@@ -261,3 +261,68 @@ export const IconText = (p: IconProps) => (
     <path d="M9 20h6" />
   </Icon>
 )
+
+/** Drag handle. Two columns of dots -- the universal "pick me up" affordance. */
+export const IconGrip = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="9" cy="6" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="6" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="9" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="9" cy="18" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="18" r="1.1" fill="currentColor" stroke="none" />
+  </Icon>
+)
+
+export const IconAsset = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3l2.4 5.2 5.6.7-4.1 3.9 1 5.6L12 15.7 7.1 18.4l1-5.6L4 8.9l5.6-.7z" />
+  </Icon>
+)
+
+export const IconRoute = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6" cy="18" r="2.4" />
+    <circle cx="18" cy="6" r="2.4" />
+    <path d="M8.4 18h5.1a3 3 0 0 0 0-6H10.5a3 3 0 0 1 0-6h5.1" />
+  </Icon>
+)
+
+export const IconMore = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.3" fill="currentColor" stroke="none" />
+  </Icon>
+)
+
+export const IconMoon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2z" />
+  </Icon>
+)
+
+export const IconSun = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M19.1 4.9l-1.5 1.5M6.4 17.6l-1.5 1.5" />
+  </Icon>
+)
+
+export const IconRows = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 6h18M3 12h18M3 18h18" />
+  </Icon>
+)
+
+export const IconArrowRight = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </Icon>
+)
+
+export const IconSwap = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 8h13l-3-3M20 16H7l3 3" />
+  </Icon>
+)

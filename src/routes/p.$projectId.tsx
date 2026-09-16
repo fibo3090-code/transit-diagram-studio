@@ -31,8 +31,10 @@ import {
   coachDismissed,
   dismissCoach,
 } from '../ui/Onboarding'
-import { Inspector, LeftPanel, Toolbar } from '../ui/panels'
+import { Browser, Inspector, MapStylePanel, ToolPalette, Toolbar } from '../ui/panels'
 import { Button, IconButton, Kbd, Toggle, inputClass } from '../ui/primitives'
+import { IconRail, ResizablePanel, useUiPrefs, type Mode } from '../ui/shell'
+import { validateProject } from '../domain/validate'
 
 export const Route = createFileRoute('/p/$projectId')({ component: Editor })
 
@@ -49,6 +51,11 @@ function Editor() {
   const [palette, setPalette] = useState(false)
   const [help, setHelp] = useState(false)
   const [coachOn, setCoachOn] = useState(() => !coachDismissed())
+  const [mode, setMode] = useState<Mode>('network')
+  const { prefs, patch } = useUiPrefs()
+  const issueCount = project
+    ? validateProject(project).filter((i) => i.severity !== 'info').length
+    : 0
 
   useAutosave()
   useKeyboard({
@@ -104,13 +111,31 @@ function Editor() {
 
   return (
     <div className="flex h-full flex-col bg-slate-50">
-      <Toolbar onExport={() => setExporting(true)} onHelp={() => setHelp(true)} />
+      <Toolbar
+        onExport={() => setExporting(true)}
+        onHelp={() => setHelp(true)}
+        theme={prefs.theme}
+        density={prefs.density}
+        onTheme={(theme) => patch({ theme })}
+        onDensity={(density) => patch({ density })}
+      />
 
       <div className="flex min-h-0 flex-1">
-        <LeftPanel />
+        <IconRail mode={mode} onMode={setMode} issueCount={issueCount} />
+
+        <ResizablePanel
+          side="left"
+          label="Browser"
+          width={prefs.browserWidth}
+          open={prefs.browserOpen}
+          onWidth={(browserWidth) => patch({ browserWidth })}
+        >
+          <Browser mode={mode} />
+        </ResizablePanel>
 
         <div className="relative flex min-w-0 flex-1 flex-col">
           <MapView />
+          <ToolPalette />
           <CanvasEmptyState onImport={importImages} />
           <Coach
             visible={coachOn}
@@ -122,7 +147,24 @@ function Editor() {
           <StatusBar onSearch={() => setPalette(true)} />
         </div>
 
-        <Inspector />
+        <ResizablePanel
+          side="right"
+          label="Inspector"
+          width={prefs.inspectorWidth}
+          open={prefs.inspectorOpen}
+          onWidth={(inspectorWidth) => patch({ inspectorWidth })}
+        >
+          {/*
+            Two zones, always both present. Selection on top, map style underneath --
+            so changing how the map looks no longer requires deselecting first.
+          */}
+          <div className="border-b border-slate-200 p-3">
+            <Inspector />
+          </div>
+          <div className="p-3">
+            <MapStylePanel />
+          </div>
+        </ResizablePanel>
       </div>
 
       {exporting && project && <ExportDialog onClose={() => setExporting(false)} />}

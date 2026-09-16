@@ -201,11 +201,17 @@ export function Popover({
 // Panel furniture
 // ---------------------------------------------------------------------------
 
+/**
+ * A section or field heading.
+ *
+ * Was 10px monospace, uppercase, wide-tracked and slate-400 -- six choices that
+ * each cost legibility, and together made a panel of settings genuinely hard to
+ * scan. Sentence case at 12px in a darker grey reads at a glance and lets a
+ * label say "Crossing gap (across)" instead of "CROSSING GAP — HEIGHT".
+ */
 export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <span className="block font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-slate-400">
-      {children}
-    </span>
+    <span className="block text-[12px] font-semibold text-slate-600">{children}</span>
   )
 }
 
@@ -260,9 +266,7 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400">
-        {label}
-      </span>
+      <span className="mb-1 block text-[12px] font-medium text-slate-600">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-[11px] leading-snug text-slate-500">{hint}</span>}
     </label>
@@ -274,6 +278,7 @@ export const inputClass =
 
 export function Slider({
   label,
+  hint,
   value,
   min,
   max,
@@ -282,6 +287,8 @@ export function Slider({
   onChange,
 }: {
   label: string
+  /** One line saying what moving this actually changes. */
+  hint?: string
   value: number
   min: number
   max: number
@@ -291,11 +298,9 @@ export function Slider({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 flex items-baseline justify-between">
-        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400">
-          {label}
-        </span>
-        <span className="font-mono text-[11px] tabular-nums text-slate-600">
+      <span className="mb-1 flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-medium text-slate-600">{label}</span>
+        <span className="font-mono text-[11px] tabular-nums text-slate-500">
           {value}
           {suffix}
         </span>
@@ -309,6 +314,7 @@ export function Slider({
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-slate-900"
       />
+      {hint && <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">{hint}</span>}
     </label>
   )
 }

@@ -1,11 +1,114 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Theme
+   ---------------------------------------------------------------------------
+   The chrome is built almost entirely from Tailwind's slate ramp plus white.
+   Tailwind v4 emits utilities as `var(--color-slate-N)`, so redefining those
+   variables under a scope re-skins every existing class at once -- which is why
+   dark mode here is forty lines rather than a rewrite of several thousand
+   className strings.
+
+   The ramp is INVERTED rather than merely darkened: slate-50 (the lightest
+   surface in light mode) becomes the darkest, and slate-900 (the darkest text)
+   becomes the lightest. Every `bg-slate-50 text-slate-900` pairing therefore
+   keeps its contrast without being touched.
+
+   The map canvas is deliberately exempt. It paints itself from the project's
+   own style settings, because what you are composing is a printed diagram and
+   it should look like paper regardless of the editor's theme.
+--------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+  /* Editor chrome density. Compact is for split-screen and small laptops. */
+  --tds-ui-font: 13px;
+  --tds-row: 34px;
+  --tds-pad: 12px;
+  --tds-rail: 56px;
+}
+
+[data-density="compact"] {
+  --tds-ui-font: 12px;
+  --tds-row: 28px;
+  --tds-pad: 8px;
+  --tds-rail: 48px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-white: #14161b;
+  --color-black: #f4f6f9;
+
+  --color-slate-50: #16181d;
+  --color-slate-100: #1c1f26;
+  --color-slate-200: #262a33;
+  --color-slate-300: #333845;
+  --color-slate-400: #7d8598;
+  --color-slate-500: #98a1b4;
+  --color-slate-600: #b3bbcb;
+  --color-slate-700: #ccd3df;
+  --color-slate-800: #e2e7ee;
+  --color-slate-900: #f4f6f9;
+  --color-slate-950: #ffffff;
+
+  /* Accents keep their hue but gain luminance, so they stay legible on a dark
+     ground instead of turning to mud. */
+  --color-blue-500: #5b93ff;
+  --color-blue-600: #6c9dff;
+  --color-red-500: #ff6b6b;
+  --color-red-600: #ff7d7d;
+  --color-emerald-500: #45d39a;
+  --color-amber-500: #f0b440;
+}
+
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; }
-body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; }
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  background: var(--color-slate-50);
+  color: var(--color-slate-900);
+}
 
 /* Keyboard focus stays visible everywhere; this app is heavily keyboard-driven. */
 :focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }
+
+/* ---------------------------------------------------------------------------
+   Chrome helpers
+--------------------------------------------------------------------------- */
+
+/* The draggable divider between a panel and the canvas. Widened well past its
+   visible line, because a 1px hit target is a cruel thing to ask anyone to
+   grab. */
+.tds-resizer {
+  position: relative;
+  flex: 0 0 auto;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+}
+.tds-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: var(--color-slate-200);
+}
+.tds-resizer:hover::after,
+.tds-resizer[data-dragging="true"]::after { background: #2563EB; }
+
+/* A row that reveals its controls on hover still has to show them to keyboard
+   users, and to anyone who has never hovered the row to find out they exist. */
+.tds-row-actions { opacity: 0.55; transition: opacity 120ms ease; }
+.tds-row:hover .tds-row-actions,
+.tds-row:focus-within .tds-row-actions { opacity: 1; }
+
+.tds-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-slate-300) transparent;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
