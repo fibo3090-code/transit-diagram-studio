@@ -174,10 +174,21 @@ const fmt = (p: Vec2) => `${Math.round(p.x * 100) / 100} ${Math.round(p.y * 100)
  * through trimmed points with the corner as control — visually identical to a circular
  * arc at transit-map radii, and far less arithmetic.
  */
-export function polylinePath(pts: Vec2[], radius = 0): string {
+/**
+ * Path through a run of points, with corners rounded.
+ *
+ * `radius` is the ordinary octilinear joint rounding, applied everywhere. `curved`
+ * marks individual vertices that should instead be rounded as hard as their
+ * neighbouring segments allow -- the sweeping arc Madrid and Berlin draw, where the
+ * corner IS the shape rather than a joint between two straights. A fixed small radius
+ * cannot express that, and raising `cornerRadius` globally would soften every joint on
+ * the map to get one curve.
+ */
+export function polylinePath(pts: Vec2[], radius = 0, curved?: boolean[]): string {
   if (pts.length === 0) return ''
   if (pts.length === 1) return `M ${fmt(pts[0])}`
-  if (radius <= 0.01 || pts.length === 2) {
+  const anyCurved = curved?.some(Boolean) ?? false
+  if ((radius <= 0.01 && !anyCurved) || pts.length === 2) {
     return `M ${pts.map(fmt).join(' L ')}`
   }
 
@@ -186,8 +197,11 @@ export function polylinePath(pts: Vec2[], radius = 0): string {
     const prev = pts[i - 1]
     const cur = pts[i]
     const next = pts[i + 1]
-    const rIn = Math.min(radius, dist(prev, cur) / 2)
-    const rOut = Math.min(radius, dist(cur, next) / 2)
+    // A curved vertex takes the largest arc its two segments can carry; half of the
+    // shorter one is the limit before the curve would overrun the neighbouring corner.
+    const r = curved?.[i] ? Math.min(dist(prev, cur), dist(cur, next)) / 2 : radius
+    const rIn = Math.min(r, dist(prev, cur) / 2)
+    const rOut = Math.min(r, dist(cur, next) / 2)
     if (rIn < 0.01 || rOut < 0.01) {
       d += ` L ${fmt(cur)}`
       continue
@@ -203,6 +217,20 @@ export function polylinePath(pts: Vec2[], radius = 0): string {
 export function polygonPath(pts: Vec2[]): string {
   if (pts.length < 3) return ''
   return `M ${pts.map(fmt).join(' L ')} Z`
+}
+
+/**
+ * A filled shape with rings cut out of it: an island in a lake, a courtyard in a park.
+ *
+ * Emitted as one path of several closed subpaths. Rendered with `fill-rule: evenodd`,
+ * an inner ring punches a hole regardless of which way round it was traced -- which
+ * matters because nobody tracing a lake thinks about winding order.
+ */
+export function polygonPathWithHoles(outer: Vec2[], holes: Vec2[][]): string {
+  const head = polygonPath(outer)
+  if (!head) return ''
+  const rings = holes.map(polygonPath).filter(Boolean)
+  return rings.length ? `${head} ${rings.join(' ')}` : head
 }
 
 // ---------------------------------------------------------------------------

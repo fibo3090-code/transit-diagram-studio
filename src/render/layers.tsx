@@ -15,6 +15,7 @@ import {
   offsetPolyline,
   sub,
   polygonPath,
+  polygonPathWithHoles,
   polylinePath,
   dist,
 } from '../domain/geometry'
@@ -30,9 +31,11 @@ import type { GuideLine } from '../domain/snapping'
 import { findCrossings, type Crossing } from '../domain/crossings'
 import { lineBadges, stationSymbol } from '../domain/symbols'
 import type {
+  BadgeShape,
   ImageId,
   LabelAnchor,
   LineId,
+  PlacementId,
   Project,
   Station,
   StationId,
@@ -45,6 +48,35 @@ import { blobUrl } from '../persistence/idb'
 // Screenshots
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve blob keys to object URLs.
+ *
+ * Shared by screenshots, the asset library and station symbols, because all three pull
+ * their bytes from the same store and all three must cope with a key that has gone --
+ * a missing url renders a placeholder rather than throwing.
+ */
+export function useBlobUrls(keys: string[]): Record<string, string> {
+  const [urls, setUrls] = useState<Record<string, string>>({})
+  const joined = keys.join('|')
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const next: Record<string, string> = {}
+      for (const key of joined ? joined.split('|') : []) {
+        const url = await blobUrl(key)
+        if (url) next[key] = url
+      }
+      if (!cancelled) setUrls(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [joined])
+
+  return urls
+}
+
 export function ScreenshotLayer({
   project,
   selected,
@@ -54,22 +86,7 @@ export function ScreenshotLayer({
   selected: Set<ImageId>
   onPointerDown: (e: React.PointerEvent, id: ImageId) => void
 }) {
-  const [urls, setUrls] = useState<Record<string, string>>({})
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const next: Record<string, string> = {}
-      for (const img of project.images) {
-        const url = await blobUrl(img.blobKey)
-        if (url) next[img.blobKey] = url
-      }
-      if (!cancelled) setUrls(next)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [project.images])
+  const urls = useBlobUrls(project.images.map((i) => i.blobKey))
 
   return (
     <g data-layer="screenshots">
@@ -132,7 +149,27 @@ const TERRAIN_STYLE: Record<string, { fill?: string; stroke?: string; width?: nu
   green: { fill: '#CFE3C4' },
   builtup: { fill: '#EDEAE4' },
   boundary: { stroke: '#B9B2A6', width: 1.5 },
+  zone: { fill: 'rgba(37,99,235,0.07)' },
   label: {},
+}
+
+/**
+ * Fill patterns for terrain.
+ *
+ * Defined once as SVG defs and referenced by url(), so the same hatch serves every
+ * shape and the export carries them along with the rest of the surface.
+ */
+export function TerrainPatterns() {
+  return (
+    <defs>
+      <pattern id="tds-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="1" opacity="0.35" />
+      </pattern>
+      <pattern id="tds-stipple" width="5" height="5" patternUnits="userSpaceOnUse">
+        <circle cx="1.5" cy="1.5" r="0.7" fill="currentColor" opacity="0.35" />
+      </pattern>
+    </defs>
+  )
 }
 
 export function TerrainLayer({
@@ -157,16 +194,22 @@ export function TerrainLayer({
         const hit = (e: React.PointerEvent) => onPointerDown(e, t.id)
 
         if (t.kind === 'label') {
+          const ts = t.text ?? {}
+          const size = (ts.size ?? project.style.fontSize * 1.4)
           return (
             <text
               key={t.id}
               x={pts[0].x}
               y={pts[0].y}
-              fontSize={project.style.fontSize * 1.4}
+              fontSize={size}
               fontFamily={project.style.fontFamily}
-              fill={project.style.foreground}
-              opacity={0.45}
-              textAnchor="middle"
+              fontWeight={ts.weight ?? 400}
+              fontStyle={ts.italic ? 'italic' : undefined}
+              letterSpacing={ts.letterSpacing ?? undefined}
+              fill={ts.color ?? project.style.foreground}
+              opacity={ts.opacity ?? 0.45}
+              textAnchor={ts.align ?? 'middle'}
+              transform={ts.angle ? `rotate(${ts.angle} ${pts[0].x} ${pts[0].y})` : undefined}
               onPointerDown={hit}
               style={{ cursor: 'move' }}
             >
@@ -175,14 +218,39 @@ export function TerrainLayer({
           )
         }
 
-        const isFilled = t.closed && style.fill
+        const holes = t.holes.map((h) => h[space]).filter((r) => r.length >= 3)
+        const closedPath = t.closed ? polygonPathWithHoles(pts, holes) : polylinePath(pts, 0)
+        const isFilled = t.closed && t.fill !== 'none' && (style.fill || t.kind === 'zone')
+        const patternId =
+          t.fill === 'hatch' ? 'tds-hatch' : t.fill === 'stipple' ? 'tds-stipple' : null
+        const flat = t.kind === 'zone' ? 'rgba(37,99,235,0.07)' : style.fill
+
         return (
           <g key={t.id}>
             {isFilled ? (
-              <path d={polygonPath(pts)} fill={style.fill} stroke="none" onPointerDown={hit} />
+              <>
+                <path
+                  d={closedPath}
+                  fill={flat}
+                  fillRule="evenodd"
+                  stroke="none"
+                  onPointerDown={hit}
+                />
+                {patternId && (
+                  // The pattern rides on top of the flat wash rather than replacing it,
+                  // so a hatched park still reads as green when the hatch is fine.
+                  <path
+                    d={closedPath}
+                    fill={`url(#${patternId})`}
+                    fillRule="evenodd"
+                    stroke="none"
+                    pointerEvents="none"
+                  />
+                )}
+              </>
             ) : (
               <path
-                d={polylinePath(pts, 0)}
+                d={closedPath}
                 fill="none"
                 stroke={style.stroke ?? '#BFDCE8'}
                 strokeWidth={style.width ?? 8}
@@ -191,10 +259,24 @@ export function TerrainLayer({
                 onPointerDown={hit}
               />
             )}
+            {t.kind === 'zone' && t.name && (
+              <text
+                x={pts[0].x}
+                y={pts[0].y - 6}
+                fontSize={project.style.fontSize}
+                fontFamily={project.style.fontFamily}
+                fill={project.style.foreground}
+                opacity={0.5}
+                pointerEvents="none"
+              >
+                {t.name}
+              </text>
+            )}
             {isSel && (
               <path
-                d={t.closed ? polygonPath(pts) : polylinePath(pts, 0)}
+                d={closedPath}
                 fill="none"
+                fillRule="evenodd"
                 stroke="#2563EB"
                 strokeWidth={2}
                 strokeDasharray="5 4"
@@ -269,12 +351,35 @@ export function LinesLayer({
                 segments.push({ a: pts[j], b: pts[j + 1], segKey: sk })
               }
             }
+            // A bend marked `curve` sweeps instead of mitring. The flag has to be
+            // mapped from bend order onto point order, because stops and passed
+            // stations occupy the same array.
+            const curved: boolean[] = new Array(pts.length).fill(false)
+            {
+              let at = 0
+              const stopSet = new Set(geom.stopIndices)
+              for (let j = 0; j < pts.length; j++) {
+                if (stopSet.has(j)) continue
+                at++
+              }
+              void at
+            }
+            for (const [key, list] of Object.entries(line.bends)) {
+              void key
+              for (const bend of list) {
+                if (!bend.curve) continue
+                // Match by position: the bend's own coordinate is already in `pts`.
+                const idx = pts.findIndex((q) => dist(q, bend[space]) < 0.75)
+                if (idx > 0 && idx < pts.length - 1) curved[idx] = true
+              }
+            }
             return {
               branch,
               geom,
               pts,
               segments,
-              path: polylinePath(pts, project.style.cornerRadius),
+              curved,
+              path: polylinePath(pts, project.style.cornerRadius, curved),
             }
           })
           .filter((x): x is NonNullable<typeof x> => !!x)
@@ -322,7 +427,7 @@ export function LinesLayer({
                   key={`sel-${d.branch.id}`}
                   d={d.path}
                   fill="none"
-                  stroke={line.color}
+                  stroke={d.branch.color ?? line.color}
                   strokeOpacity={0.28}
                   strokeWidth={width + 10}
                   strokeLinecap="round"
@@ -355,7 +460,7 @@ export function LinesLayer({
                 key={`ink-${d.branch.id}`}
                 d={d.path}
                 fill="none"
-                stroke={line.color}
+                stroke={d.branch.color ?? line.color}
                 strokeWidth={width}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -363,6 +468,34 @@ export function LinesLayer({
                 pointerEvents="none"
               />
             ))}
+
+            {/*
+              One-way running gets an arrowhead at the midpoint of each drawn segment.
+              Placed along the line rather than at its end, because a passenger needs to
+              know which way a section runs, not only where it terminates.
+            */}
+            {project.view.showDirection &&
+              branches
+                .filter((d) => d.branch.direction === 'forward')
+                .flatMap((d) =>
+                  d.segments.map((seg, i) => {
+                    if (i % 2 === 1) return null
+                    const mx = (seg.a.x + seg.b.x) / 2
+                    const my = (seg.a.y + seg.b.y) / 2
+                    const ang = (Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x) * 180) / Math.PI
+                    const h = Math.max(3, width * 0.42)
+                    return (
+                      <path
+                        key={`dir-${d.branch.id}-${i}`}
+                        d={`M ${-h} ${-h} L ${h * 0.9} 0 L ${-h} ${h} Z`}
+                        fill={project.style.background}
+                        opacity={0.9}
+                        transform={`translate(${mx} ${my}) rotate(${ang})`}
+                        pointerEvents="none"
+                      />
+                    )
+                  }),
+                )}
 
             {/* Clicking a crossing selects it, so its break can be tuned by hand. */}
             {mine.map((c) => (
@@ -490,6 +623,11 @@ export function StationsLayer({
   const fg = project.style.foreground
   const bg = project.style.background
   const sw = 2.5 * project.style.strokeScale
+  const assetByKey = new Map(project.assets.map((a) => [a.id, a]))
+  const symbolAssets = project.stations
+    .map((s) => (s.symbol.kind === 'asset' ? assetByKey.get(s.symbol.assetId)?.blobKey : null))
+    .filter((k): k is string => !!k)
+  const urls = useBlobUrls(symbolAssets)
 
   return (
     <g data-layer="stations">
@@ -497,10 +635,17 @@ export function StationsLayer({
         const pos = s[space]
         const sym = stationSymbol(project, network, s, space)
         const isSelected = selected.has(s.id)
+        // The drawn mark stays small; the target around it does not. Pointing at a stop
+        // should not require the precision of pointing at a 6px dot.
         const hitR = Math.max(
           sym.shape.kind === 'bar' ? sym.shape.halfLength : (sym.shape as { radius: number }).radius,
-          12,
+          project.style.hitRadius,
         )
+        // Not yet open: drawn hollow and dashed, the convention every network uses for
+        // something under construction.
+        const pending = s.status !== 'open'
+        const asset = s.symbol.kind === 'asset' ? assetByKey.get(s.symbol.assetId) : undefined
+        const assetUrl = asset ? urls[asset.blobKey] : undefined
 
         return (
           <g
@@ -523,7 +668,29 @@ export function StationsLayer({
             )}
             <circle r={hitR} fill="transparent" data-ui="hit" />
 
-            {sym.shape.kind === 'bar' && (
+            {assetUrl && asset && s.symbol.kind === 'asset' && (
+              <image
+                href={assetUrl}
+                x={(-asset.width * s.symbol.scale) / 2}
+                y={(-asset.height * s.symbol.scale) / 2}
+                width={asset.width * s.symbol.scale}
+                height={asset.height * s.symbol.scale}
+                preserveAspectRatio="xMidYMid meet"
+              />
+            )}
+
+            {!assetUrl && pending && (
+              <circle
+                r={(sym.shape as { radius?: number }).radius ?? project.style.stationRadius}
+                fill={bg}
+                stroke={fg}
+                strokeWidth={sw}
+                strokeDasharray={`${sw * 1.6} ${sw * 1.4}`}
+                opacity={s.status === 'planned' ? 0.55 : 0.8}
+              />
+            )}
+
+            {!assetUrl && !pending && sym.shape.kind === 'bar' && (
               <g
                 transform={`rotate(${(Math.atan2(sym.shape.dir.y, sym.shape.dir.x) * 180) / Math.PI})`}
               >
@@ -540,15 +707,15 @@ export function StationsLayer({
               </g>
             )}
 
-            {sym.shape.kind === 'interchange' && (
+            {!assetUrl && !pending && sym.shape.kind === 'interchange' && (
               <circle r={sym.shape.radius} fill={bg} stroke={fg} strokeWidth={sw} />
             )}
 
-            {sym.shape.kind === 'plain' && (
+            {!assetUrl && !pending && sym.shape.kind === 'plain' && (
               <PlainSymbol shape={sym.shape} bg={bg} sw={sw} />
             )}
 
-            {sym.shape.kind === 'orphan' && (
+            {!assetUrl && !pending && sym.shape.kind === 'orphan' && (
               <circle r={sym.shape.radius} fill={fg} opacity={0.25} />
             )}
           </g>
@@ -572,6 +739,91 @@ const ANCHOR_DIR: Record<LabelAnchor, Vec2> = {
   sw: { x: -0.72, y: 0.72 },
   w: { x: -1, y: 0 },
   nw: { x: -0.72, y: -0.72 },
+}
+
+/**
+ * The small marks set beside a station name.
+ *
+ * Deliberately drawn as paths rather than emoji or an icon font: the export has to be a
+ * self-contained SVG that opens anywhere, and a glyph that depends on the reader having
+ * a font installed is not that.
+ */
+export const BUILTIN_BADGES = [
+  { id: 'step-free', name: 'Step-free access' },
+  { id: 'airport', name: 'Airport' },
+  { id: 'rail', name: 'National rail' },
+  { id: 'ferry', name: 'Ferry pier' },
+  { id: 'bus', name: 'Bus station' },
+  { id: 'park-ride', name: 'Park and ride' },
+] as const
+
+function StationBadge({
+  id,
+  x,
+  size,
+  fg,
+  bg,
+}: {
+  id: string
+  x: number
+  size: number
+  fg: string
+  bg: string
+}) {
+  const r = size / 2
+  const stroke = Math.max(0.8, size * 0.09)
+  const glyph = () => {
+    switch (id) {
+      case 'step-free':
+        // Wheelchair: head, back, wheel, footrest -- readable down to about 9px.
+        return (
+          <g fill="none" stroke={fg} strokeWidth={stroke} strokeLinecap="round">
+            <circle cx={0} cy={-r * 0.52} r={r * 0.2} fill={fg} stroke="none" />
+            <path d={`M ${-r * 0.1} ${-r * 0.22} v ${r * 0.5} h ${r * 0.45}`} />
+            <circle cx={r * 0.04} cy={r * 0.42} r={r * 0.42} />
+          </g>
+        )
+      case 'airport':
+        return (
+          <path
+            d={`M ${-r * 0.72} ${r * 0.1} L ${r * 0.72} ${-r * 0.32} M ${-r * 0.1} ${-r * 0.5} L ${r * 0.2} ${-r * 0.2} M ${-r * 0.34} ${r * 0.52} L ${-r * 0.1} ${r * 0.16}`}
+            fill="none"
+            stroke={fg}
+            strokeWidth={stroke * 1.3}
+            strokeLinecap="round"
+          />
+        )
+      case 'rail':
+        return (
+          <g fill="none" stroke={fg} strokeWidth={stroke} strokeLinecap="round">
+            <path d={`M ${-r * 0.5} ${-r * 0.5} v ${r} M ${r * 0.5} ${-r * 0.5} v ${r}`} />
+            <path d={`M ${-r * 0.75} ${-r * 0.16} h ${r * 1.5} M ${-r * 0.75} ${r * 0.2} h ${r * 1.5}`} />
+          </g>
+        )
+      case 'ferry':
+        return (
+          <g fill="none" stroke={fg} strokeWidth={stroke} strokeLinecap="round">
+            <path d={`M ${-r * 0.62} ${r * 0.24} h ${r * 1.24} l ${-r * 0.3} ${r * 0.42} h ${-r * 0.64} Z`} fill={fg} stroke="none" />
+            <path d={`M 0 ${-r * 0.62} v ${r * 0.86} M ${-r * 0.34} ${-r * 0.3} h ${r * 0.68}`} />
+          </g>
+        )
+      case 'bus':
+        return (
+          <g fill="none" stroke={fg} strokeWidth={stroke}>
+            <rect x={-r * 0.6} y={-r * 0.6} width={r * 1.2} height={r * 1.1} rx={r * 0.25} />
+            <path d={`M ${-r * 0.6} ${-r * 0.06} h ${r * 1.2}`} />
+          </g>
+        )
+      default:
+        return <circle r={r * 0.34} fill={fg} />
+    }
+  }
+  return (
+    <g transform={`translate(${x} 0)`}>
+      <circle r={r} fill={bg} stroke={fg} strokeWidth={stroke} opacity={0.92} />
+      {glyph()}
+    </g>
+  )
 }
 
 export function LabelsLayer({
@@ -615,26 +867,85 @@ export function LabelsLayer({
         const textAnchor = dir.x > 0.3 ? 'start' : dir.x < -0.3 ? 'end' : 'middle'
         const dy = dir.y > 0.3 ? '0.85em' : dir.y < -0.3 ? '-0.2em' : '0.32em'
 
+        const secondSize = fontSize * project.style.secondaryNameScale
+        const badges = project.view.showBadges ? s.badges : []
+        // Badges sit on the far side of the name from the stop, so they never collide
+        // with the track, and they read as belonging to the label rather than the dot.
+        const badgeX = textAnchor === 'end' ? x - 0 : x
+        const badgeDir = textAnchor === 'end' ? -1 : 1
+
         return (
-          <text
-            key={s.id}
-            x={x}
-            y={y}
-            dy={dy}
-            textAnchor={textAnchor}
-            fontSize={fontSize}
-            fontFamily={fontFamily}
-            fontWeight={isInterchange ? 600 : 500}
-            fill={foreground}
-            stroke={background}
-            strokeWidth={3}
-            paintOrder="stroke"
-            transform={s.label.angle ? `rotate(${s.label.angle} ${x} ${y})` : undefined}
-            onPointerDown={(e) => onPointerDown(e, s.id)}
-            style={{ cursor: 'move' }}
-          >
-            {s.name}
-          </text>
+          <g key={s.id} transform={s.label.angle ? `rotate(${s.label.angle} ${x} ${y})` : undefined}>
+            <text
+              x={x}
+              y={y}
+              dy={dy}
+              textAnchor={textAnchor}
+              fontSize={fontSize}
+              fontFamily={fontFamily}
+              fontWeight={isInterchange ? 600 : 500}
+              fill={foreground}
+              stroke={background}
+              strokeWidth={3}
+              paintOrder="stroke"
+              onPointerDown={(e) => onPointerDown(e, s.id)}
+              style={{ cursor: 'move' }}
+            >
+              {s.name}
+            </text>
+
+            {s.nameSecondary && (
+              <text
+                x={x}
+                y={y}
+                dy={`calc(${dy} + ${secondSize * 1.15}px)`}
+                textAnchor={textAnchor}
+                fontSize={secondSize}
+                fontFamily={fontFamily}
+                fontWeight={400}
+                fill={foreground}
+                opacity={0.62}
+                stroke={background}
+                strokeWidth={2.5}
+                paintOrder="stroke"
+                onPointerDown={(e) => onPointerDown(e, s.id)}
+                style={{ cursor: 'move' }}
+              >
+                {s.nameSecondary}
+              </text>
+            )}
+
+            {badges.length > 0 && (
+              <g transform={`translate(${badgeX} ${y})`} pointerEvents="none">
+                {badges.map((b, i) => (
+                  <StationBadge
+                    key={b}
+                    id={b}
+                    x={badgeDir * (i * (fontSize * 0.92) + fontSize * 0.55)}
+                    size={fontSize * 0.78}
+                    fg={foreground}
+                    bg={background}
+                  />
+                ))}
+              </g>
+            )}
+
+            {s.zone && project.view.showZones && (
+              <text
+                x={x}
+                y={y}
+                dy={`calc(${dy} - ${fontSize * 0.95}px)`}
+                textAnchor={textAnchor}
+                fontSize={fontSize * 0.7}
+                fontFamily={fontFamily}
+                fill={foreground}
+                opacity={0.5}
+                pointerEvents="none"
+              >
+                {s.zone}
+              </text>
+            )}
+          </g>
         )
       })}
     </g>
@@ -917,6 +1228,54 @@ function PlainSymbol({
 // Route badges
 // ---------------------------------------------------------------------------
 
+/**
+ * The shape a route bullet takes.
+ *
+ * Networks are recognised by this as much as by their colours -- London's roundel,
+ * New York's disc, Vienna's square. One hardcoded pill made every map look like the
+ * same map.
+ */
+function RouteBullet({
+  shape,
+  w,
+  h,
+  color,
+}: {
+  shape: BadgeShape
+  w: number
+  h: number
+  color: string
+}) {
+  const r = h / 2
+  switch (shape) {
+    case 'circle':
+      return <circle r={r} fill={color} />
+    case 'roundel':
+      // A bar across a ring: the mark reads at a glance even at poster distance.
+      return (
+        <g>
+          <circle r={r} fill="none" stroke={color} strokeWidth={r * 0.46} />
+          <rect x={-w / 2} y={-r * 0.34} width={w} height={r * 0.68} fill={color} />
+        </g>
+      )
+    case 'square':
+      return <rect x={-r} y={-r} width={r * 2} height={r * 2} fill={color} />
+    case 'diamond':
+      return <path d={`M 0 ${-r} L ${r} 0 L 0 ${r} L ${-r} 0 Z`} fill={color} />
+    case 'hex': {
+      const pts = [0, 1, 2, 3, 4, 5]
+        .map((k) => {
+          const a = (Math.PI / 3) * k - Math.PI / 6
+          return `${(r * Math.cos(a)).toFixed(2)},${(r * Math.sin(a)).toFixed(2)}`
+        })
+        .join(' L ')
+      return <path d={`M ${pts} Z`} fill={color} />
+    }
+    default:
+      return <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={h / 2} fill={color} />
+  }
+}
+
 export function BadgeLayer({
   project,
   network,
@@ -941,14 +1300,7 @@ export function BadgeLayer({
         const h = fs * 1.7
         return (
           <g key={`${b.lineId}-${i}`} transform={`translate(${b.at.x} ${b.at.y})`}>
-            <rect
-              x={-w / 2}
-              y={-h / 2}
-              width={w}
-              height={h}
-              rx={h / 2}
-              fill={b.color}
-            />
+            <RouteBullet shape={project.style.badgeShape} w={w} h={h} color={b.color} />
             <text
               y={0}
               dy="0.34em"
@@ -1215,6 +1567,179 @@ export function RouteLayer({
           strokeWidth={2.5}
         />
       ))}
+    </g>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Placements — the map furniture
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything on the map that is not part of the network: markers cropped from the
+ * source art, the legend, a north arrow, a scale bar, a title block, a frame.
+ *
+ * All of it carries both positions for the same reason a station does. A legend placed
+ * on the diagram should not move because the geographic view was nudged.
+ */
+export function PlacementLayer({
+  project,
+  space,
+  selected,
+  onPointerDown,
+}: {
+  project: Project
+  space: Space
+  selected: Set<PlacementId>
+  onPointerDown: (e: React.PointerEvent, id: PlacementId) => void
+}) {
+  const assetByKey = new Map(project.assets.map((a) => [a.id, a]))
+  const keys = project.placements
+    .map((pl) => (pl.what.kind === 'asset' ? assetByKey.get(pl.what.assetId)?.blobKey : null))
+    .filter((k): k is string => !!k)
+  const urls = useBlobUrls(keys)
+
+  if (!project.view.showPlacements) return null
+  const { foreground, background, fontFamily, fontSize } = project.style
+
+  return (
+    <g data-layer="placements">
+      {project.placements.map((pl) => {
+        if (pl.hidden) return null
+        const at = pl[space]
+        const isSel = selected.has(pl.id)
+        const hit = (e: React.PointerEvent) => onPointerDown(e, pl.id)
+
+        let body: React.ReactNode = null
+        let w = 0
+        let h = 0
+
+        if (pl.what.kind === 'asset') {
+          const a = assetByKey.get(pl.what.assetId)
+          const url = a ? urls[a.blobKey] : undefined
+          if (a) {
+            w = a.width
+            h = a.height
+            body = url ? (
+              <image href={url} x={-w / 2} y={-h / 2} width={w} height={h} />
+            ) : (
+              <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="none" stroke={foreground} strokeDasharray="4 3" opacity={0.4} />
+            )
+          }
+        } else if (pl.what.kind === 'northArrow') {
+          const r = 22
+          w = h = r * 2
+          body = (
+            <g>
+              <circle r={r} fill={background} stroke={foreground} strokeWidth={1.2} opacity={0.9} />
+              <path d={`M 0 ${-r * 0.72} L ${r * 0.34} ${r * 0.5} L 0 ${r * 0.2} L ${-r * 0.34} ${r * 0.5} Z`} fill={foreground} />
+              <text y={-r * 0.82} textAnchor="middle" fontSize={fontSize * 0.8} fontFamily={fontFamily} fill={foreground} fontWeight={700}>
+                N
+              </text>
+            </g>
+          )
+        } else if (pl.what.kind === 'scaleBar') {
+          const unit = 100
+          w = unit * 2
+          h = 18
+          body = (
+            <g>
+              <rect x={-w / 2} y={-3} width={unit} height={6} fill={foreground} />
+              <rect x={-w / 2 + unit} y={-3} width={unit} height={6} fill={background} stroke={foreground} strokeWidth={1} />
+              <text x={-w / 2} y={18} fontSize={fontSize * 0.72} fontFamily={fontFamily} fill={foreground} textAnchor="middle">0</text>
+              <text x={w / 2} y={18} fontSize={fontSize * 0.72} fontFamily={fontFamily} fill={foreground} textAnchor="middle">
+                {pl.label ?? `${unit * 2}`}
+              </text>
+            </g>
+          )
+        } else if (pl.what.kind === 'legend') {
+          // Derived from the project rather than stored, so it can never fall out of
+          // step with the lines it describes -- the same rule the network follows.
+          const rows = project.lines.filter((l) => !l.hidden)
+          const rowH = fontSize * 1.75
+          w = 210
+          h = rowH * (rows.length + 1) + 12
+          body = (
+            <g>
+              <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={8} fill={background} stroke={foreground} strokeOpacity={0.18} />
+              <text x={-w / 2 + 12} y={-h / 2 + rowH * 0.9} fontSize={fontSize * 0.95} fontWeight={700} fontFamily={fontFamily} fill={foreground}>
+                {pl.label ?? 'Legend'}
+              </text>
+              {rows.map((l, i) => {
+                const mode = modeById(project.modes, l.mode)
+                const y = -h / 2 + rowH * (i + 1.85)
+                return (
+                  <g key={l.id}>
+                    <line
+                      x1={-w / 2 + 12}
+                      y1={y - fontSize * 0.3}
+                      x2={-w / 2 + 44}
+                      y2={y - fontSize * 0.3}
+                      stroke={l.color}
+                      strokeWidth={Math.min(6, mode.strokeWidth * 0.7)}
+                      strokeLinecap="round"
+                      strokeDasharray={mode.dash?.join(' ')}
+                    />
+                    <text x={-w / 2 + 54} y={y} fontSize={fontSize * 0.88} fontFamily={fontFamily} fill={foreground}>
+                      {l.name}
+                    </text>
+                  </g>
+                )
+              })}
+            </g>
+          )
+        } else if (pl.what.kind === 'titleBlock') {
+          w = 280
+          h = 74
+          body = (
+            <g>
+              <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={6} fill={background} stroke={foreground} strokeOpacity={0.18} />
+              <text x={-w / 2 + 14} y={-h / 2 + 30} fontSize={fontSize * 1.5} fontWeight={700} fontFamily={fontFamily} fill={foreground}>
+                {pl.label ?? project.name}
+              </text>
+              <text x={-w / 2 + 14} y={-h / 2 + 52} fontSize={fontSize * 0.82} fontFamily={fontFamily} fill={foreground} opacity={0.6}>
+                {project.stations.length} stops · {project.lines.length} lines
+              </text>
+            </g>
+          )
+        } else if (pl.what.kind === 'frame') {
+          w = 900
+          h = 640
+          body = (
+            <g>
+              <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="none" stroke={foreground} strokeWidth={3} opacity={0.75} />
+              <rect x={-w / 2 + 9} y={-h / 2 + 9} width={w - 18} height={h - 18} fill="none" stroke={foreground} strokeWidth={1} opacity={0.4} />
+            </g>
+          )
+        }
+
+        return (
+          <g
+            key={pl.id}
+            data-placement={pl.id}
+            transform={`translate(${at.x} ${at.y}) rotate(${pl.angle}) scale(${pl.scale})`}
+            opacity={pl.opacity}
+            onPointerDown={pl.locked ? undefined : hit}
+            style={{ cursor: pl.locked ? 'not-allowed' : 'move' }}
+          >
+            {body}
+            {isSel && (
+              <rect
+                x={-w / 2 - 6}
+                y={-h / 2 - 6}
+                width={w + 12}
+                height={h + 12}
+                fill="none"
+                stroke="#2563EB"
+                strokeWidth={2}
+                strokeDasharray="5 4"
+                pointerEvents="none"
+                data-ui="selection"
+              />
+            )}
+          </g>
+        )
+      })}
     </g>
   )
 }

@@ -13,6 +13,9 @@ import {
   dist,
   octilinearizeRun,
   offsetPolyline,
+  polygonPath,
+  polygonPathWithHoles,
+  polylinePath,
   simplify,
   snapDir45,
 } from './geometry'
@@ -979,6 +982,62 @@ check('migration drops a symbol pointing at a missing asset', () => {
   p.stations = [s]
   const fixed = normalizeProject(JSON.parse(JSON.stringify(p)))
   expect(fixed.stations[0].symbol, { kind: 'auto' }, 'a dangling asset ref must fall back: ')
+})
+
+// ---------------------------------------------------------------------------
+// Curves and holes
+// ---------------------------------------------------------------------------
+
+check('a plain run with no rounding is straight segments', () => {
+  const d = polylinePath([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], 0)
+  assert(!d.includes('Q'), 'no radius means no curve')
+})
+
+check('a curved vertex arcs even when the global radius is zero', () => {
+  const pts = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
+  const plain = polylinePath(pts, 0)
+  const curved = polylinePath(pts, 0, [false, true, false])
+  assert(!plain.includes('Q'), 'baseline is mitred')
+  assert(curved.includes('Q'), 'the flagged corner must sweep')
+})
+
+check('a curved vertex takes a larger arc than the global radius', () => {
+  const pts = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
+  const small = polylinePath(pts, 4)
+  const swept = polylinePath(pts, 4, [false, true, false])
+  assert(small !== swept, 'the curve flag must change the path')
+  // The arc starts further back along the incoming segment the bigger it is.
+  const startX = (d: string) => Number(/L ([-\d.]+)/.exec(d)![1])
+  assert(startX(swept) < startX(small), 'a swept corner leaves the straight earlier')
+})
+
+check('an arc never overruns its neighbouring segment', () => {
+  // A short segment between two long ones: the curve must clamp to half of it.
+  const pts = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 110, y: 0 }, { x: 110, y: 100 }]
+  const d = polylinePath(pts, 0, [false, true, true, false])
+  const xs = [...d.matchAll(/([-\d.]+),([-\d.]+)/g)].map((m) => Number(m[1]))
+  assert(xs.every((x) => x >= -0.01 && x <= 110.01), 'no control point may escape the run')
+})
+
+check('a shape with no holes is a single closed subpath', () => {
+  const sq = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]
+  const d = polygonPathWithHoles(sq, [])
+  expect(d.match(/Z/g)?.length, 1)
+  expect(d, polygonPath(sq), 'no holes must be identical to the plain path: ')
+})
+
+check('a hole adds a second closed subpath', () => {
+  const sq = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]
+  const hole = [{ x: 3, y: 3 }, { x: 7, y: 3 }, { x: 7, y: 7 }, { x: 3, y: 7 }]
+  const d = polygonPathWithHoles(sq, [hole])
+  expect(d.match(/Z/g)?.length, 2, 'outer ring plus the island: ')
+  expect(d.match(/M/g)?.length, 2)
+})
+
+check('a degenerate hole is dropped rather than drawn', () => {
+  const sq = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]
+  const d = polygonPathWithHoles(sq, [[{ x: 1, y: 1 }, { x: 2, y: 2 }]])
+  expect(d.match(/Z/g)?.length, 1, 'two points cannot enclose anything: ')
 })
 
 // ---------------------------------------------------------------------------
