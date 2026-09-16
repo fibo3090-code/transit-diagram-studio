@@ -239,6 +239,12 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: 'Sections',
+    rows: [
+      ['1 – 7', 'Network · Terrain · Screenshots · Assets · Journeys · Data · Checks'],
+    ],
+  },
+  {
     title: 'Moving around',
     rows: [
       ['G', 'Swap geographic ↔ diagram'],
@@ -254,7 +260,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ['Shift+click', 'Add to the selection'],
       ['Drag on empty', 'Box-select stations'],
       ['Arrows', 'Nudge 1px · Shift for 10px'],
-      ['Delete', 'Remove the selection'],
+      ['Delete / Backspace', 'Remove the selection, whatever it is'],
       ['Esc', 'Cancel the trace, then the selection'],
     ],
   },
@@ -273,7 +279,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     rows: [
       ['Ctrl+K', 'Search stations, lines and commands'],
       ['Ctrl+Z', 'Undo'],
-      ['Ctrl+Shift+Z', 'Redo'],
+      ['Ctrl+Shift+Z', 'Redo (Ctrl+Y too)'],
       ['?', 'This list'],
     ],
   },
@@ -311,9 +317,7 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         <div className="grid gap-6 sm:grid-cols-2">
           {GROUPS.map((g) => (
             <div key={g.title}>
-              <p className="mb-2 font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-slate-400">
-                {g.title}
-              </p>
+              <p className="mb-2 text-[12px] font-semibold text-slate-600">{g.title}</p>
               <dl className="space-y-1.5">
                 {g.rows.map(([key, what]) => (
                   <div key={key} className="flex items-baseline justify-between gap-4">

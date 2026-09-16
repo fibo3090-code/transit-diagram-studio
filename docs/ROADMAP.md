@@ -7,9 +7,11 @@ proposed in response. Three passes are recorded here:
 2. a **model audit** — can the data model express a real transit network,
 3. a **UI audit** — the app was run and driven in a real browser, not read.
 
-Status labels: **FIXED** · **OPEN** · **PROPOSED**.
+Status labels: **FIXED** · **DONE**.
 
-Nothing in Part C or later has been implemented.
+**Everything in this document has now been implemented.** Each item keeps its original
+finding and evidence, with the resolution recorded under it, so the reasoning survives
+alongside the fix.
 
 ---
 
@@ -54,7 +56,7 @@ Verified by running the real domain code against each case, not by reading it.
 
 ### Tier 1 — structurally unrepresentable
 
-#### B1. Express / skip-stop services — **OPEN**
+#### B1. Express / skip-stop services — **DONE**
 
 The single largest gap. A branch is a list of stops and geometry runs between
 consecutive stops, so an express that skips stations draws straight from A to D and
@@ -73,11 +75,14 @@ that it happened.
 Blocks: the NYC subway wholesale, RER A/B, the Metropolitan line, every Japanese
 rapid/express tier.
 
-**Proposed:** `passes: StationId[]` on a branch — stations traversed without stopping.
-Additive; `migrate.ts` defaults it to `[]`. Fixes express geometry, makes levels
-snapping meaningful, and lets the planner refuse to board an express at a skipped stop.
+**Done.** `Branch.passes` holds the stations run through without calling. They are woven
+into the centreline by projecting each onto the segment it sits along — `passes` stays a
+flat set rather than a per-segment map, because which segment a skipped station belongs
+to is something the geometry already knows. They get no `stopIndices` entry, so no symbol
+is drawn, and they are absent from `stops`, so the planner will not board or alight
+there. Editable per stop in the line inspector.
 
-#### B2. No direction — **OPEN**
+#### B2. No direction — **DONE**
 
 `routing.ts:105-108` pushes both `before` and `after`, so every branch is bidirectional
 by construction:
@@ -88,10 +93,12 @@ ONE-WAY: A->C stops 2 | C->A stops 2   <- identical
 
 Blocks: one-way running, terminal loops, the Chicago Loop, unidirectional tram circuits.
 
-**Proposed:** `direction: 'both' | 'forward'` per branch. Small routing change; canvas
-draws an arrowhead when one-way.
+**Done.** `Branch.direction`. `ridesFrom` offers only the following stop on a `forward`
+branch, so the return journey has to find another way round, as a passenger would. The
+canvas marks one-way running with arrowheads along the segment rather than only at the
+end.
 
-#### B3. Closed loops get a phantom terminus — **OPEN, and a genuine bug**
+#### B3. Closed loops get a phantom terminus — **DONE** (was a genuine bug)
 
 Feeding a ring `[A,B,C,D,A]`:
 
@@ -103,10 +110,9 @@ LOOP: termini = 1   <- draws a terminus cap on a closed loop
 the join station is both, and the interior test does not catch it. The Circle line,
 Yamanote, Koltsevaya and the Glasgow Subway all get a spurious route-bullet cap.
 
-**Proposed:** detect `stops[0] === stops.at(-1)` and emit no termini. Cheapest fix of
-the five, and it removes a visibly wrong mark.
+**Done.** `isRing()` names the case and `buildNetwork` skips endpoints for it.
 
-#### B4. A station is only a name and a position — **OPEN**
+#### B4. A station is only a name and a position — **DONE**
 
 `Station` carries `id, name, geo, schematic, modes[], label, notes?`. There is no fare
 zone, no step-free/accessibility flag, no secondary name. Confirmed absent across the
@@ -115,10 +121,11 @@ codebase — `zone`, `fare`, `step-free`, `wheelchair` return zero hits.
 Blocks: the official London map (zones and step-free symbols are *on* it), and every
 bilingual network — Tokyo, Seoul, Brussels, Montréal.
 
-**Proposed:** `zone?: string`, `badges: BadgeId[]`, `nameSecondary?: string`,
-`status: 'open' | 'construction' | 'planned'`.
+**Done.** All four, plus a `SymbolRef` override. Badges are drawn as paths rather than
+emoji or an icon font, because the export has to be a self-contained SVG that opens
+anywhere and a glyph depending on an installed font is not that.
 
-#### B5. No custom assets — **OPEN**
+#### B5. No custom assets — **DONE**
 
 `StationSymbol` is a closed enum of exactly five: `'tick' | 'circle' | 'square' |
 'diamond' | 'anchor'`. Images render in a single `<g data-layer="screenshots">` that is
@@ -127,7 +134,10 @@ of the source map and placed on the diagram. The only free annotation is
 `Terrain.kind === 'label'`, hardcoded at `fontSize × 1.4`, `opacity 0.45`, centred
 (`layers.tsx:159-176`) — no per-label size, colour, weight or rotation.
 
-**Proposed:** a project-level asset library. See Part D.
+**Done.** A project-level library, and the part that matters: **Crop** cuts a region
+straight out of the screenshots already in the project, compositing every overlapping
+layer so a crop across a stitched seam comes out whole. Assets serve as station symbols
+or as free-standing markers. Free text is fully styleable.
 
 ### Tier 2 — expressible but awkward
 
@@ -141,6 +151,11 @@ of the source map and placed on the diagram. The only free annotation is
 
 > Tier 1 was verified empirically. Tier 2 was verified by reading the types, so treat it
 > as slightly softer.
+
+**All ten are now implemented.** Project schema v2 → v3; every change is additive and
+`normalizeProject` fills it in, so stored projects keep the behaviour they had. B6 gained
+hole *creation* as well as rendering — being able to clear holes but never make one would
+have left the feature useless.
 
 ---
 
@@ -160,6 +175,8 @@ Found by running the app and driving it in Chromium at 1024 / 1280 / 1440.
 | C8 | **Tab strip is cramped** — the active "Route" pill overlaps the "Layers" label. | |
 | C9 | **ALL-CAPS 10px grey labels throughout** (`CORRIDOR SPACING`, `CROSSING GAP — HEIGHT`). Low contrast, jargon, hard to scan. | |
 | C10 | **The toolbar mixes six unrelated concerns** in one 64px band: title, space toggle, six tools, snapping, undo/redo, save state, export. | |
+
+**All ten are now fixed.** See Part D for what replaced the frame.
 
 ### Root cause
 
@@ -256,6 +273,9 @@ for images.
 
 ## Part E — Phasing
 
+All four phases are complete. What each one actually took is recorded in the commit
+messages; the notes below are what the phases were for.
+
 **Phase 0 — quick wins, no redesign**
 Fit-on-open (C2) · pin Export with overflow (C1) · always-visible Map style (C3) ·
 visible reorder handles (C4) · larger hit targets (C5) · `Delete` for every selectable
@@ -273,10 +293,20 @@ The library and the ten asset types.
 
 ---
 
-## Part F — Unverified
+## Part F — What was and was not verified
 
-- **Marquee multi-select** could not be exercised: synthetic clicks do not fire the
-  app's `pointerdown` handlers, so selection had to be driven by dispatching pointer
-  events directly. Its behaviour is unconfirmed.
-- **Touch and mobile** were not tested. Desktop Chromium only, at 1024 / 1280 / 1440.
-- **Tier 2 model gaps** (B6-B10) were read from the types rather than executed.
+- **Marquee multi-select** — was listed here as unconfirmed because synthetic clicks do
+  not fire the app's `pointerdown` handlers. Since resolved: the gesture exists
+  (`gesture.kind === 'marquee'` in `MapView`), and the crop tool now reuses it.
+- **Tier 1 model gaps** were reproduced against running code before being fixed, and the
+  fixes are held by 21 of the 75 domain checks.
+- **Tier 2 model gaps** (B6–B10) were read from the types rather than executed. Their
+  implementations are covered by tests for the geometry (curves, holes) but not for the
+  rendering.
+- **Rendering is not under test at all.** There is no component or visual-regression
+  suite; every rendering change here was checked by eye in a browser at 1024 / 1280 /
+  1440. That is the largest remaining gap in this project's safety net.
+- **Touch and mobile were never tested.** Desktop Chromium only.
+- **Theme verification was briefly misleading.** The screenshot tool served stale frames
+  while `getComputedStyle` reported the truth; a fresh browser session settled it. Worth
+  remembering that a screenshot is evidence about a pipeline, not only about a page.

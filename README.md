@@ -13,7 +13,7 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 54 domain checks (pure logic, no browser) |
+| `npm test` | 75 domain checks (pure logic, no browser) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
 
@@ -27,6 +27,23 @@ way to see what the tool produces before facing a blank canvas.
 
 A new map opens with two clear ways to begin, and a coach in the corner names the single
 next useful step until you dismiss it.
+
+## The layout
+
+Four zones, each answering exactly one question, and none of them ever replaced by
+another zone's answer:
+
+| Zone | Answers |
+| --- | --- |
+| Icon rail | What am I working on — network, terrain, screenshots, assets, journeys, data, checks. <kbd>1</kbd>–<kbd>7</kbd>. |
+| Browser | The list for that section. Drag its edge to resize. |
+| Canvas | The work, with the tools floating over it. |
+| Inspector | What is selected, above **Map style** — which is always there, whatever is selected. |
+
+The editor has a dark theme and a compact density, both under the **⋯** menu. They are
+stored per browser rather than in the project, because a panel width belongs to the
+person, not to the map. The canvas itself stays light in either theme: what you are
+composing is a printed diagram, and it should look like paper.
 
 ## The two ideas everything rests on
 
@@ -56,7 +73,8 @@ time, so they cannot drift out of sync with the graph.
 3. **Place stations** — click to drop, then name them.
 4. **Build lines** — create a line, click its stations in order. Lines support real
    **branching**: a line is a set of connected branches sharing one identity, so
-   Y-shaped services are first class.
+   Y-shaped services are first class. Each branch can run **one way**, carry its own
+   **colour**, and note **when it runs**.
 5. **Compose the diagram** — switch to the schematic view and drag stations into shape
    with four snap types and live guides.
 6. **Export** — SVG, PNG, PDF, an interactive HTML page, or the project file.
@@ -72,8 +90,40 @@ into the neighbouring track in a shared corridor and paint the background over a
 the line passes — a river, a park. Crossings that land on a station are left alone,
 because those are junctions. Bridge width is adjustable, and 0 turns it off.
 
+**Express services.** A stop on a branch can be switched from *calling* to *passing
+through*. A passed station keeps the line running through it — the express follows the
+local alignment instead of cutting a straight line between the stops it serves — but
+carries no symbol, and the journey planner will not let you board or alight there. This
+is what the New York express/local pattern, the RER and the Metropolitan line need.
+
+**Rings.** A line whose last stop repeats its first is a closed loop and gets no
+terminus, so the Circle line does not grow a route bullet in its middle.
+
+**Stations carry more than a name.** A second name in another script, a fare zone, a
+status (open, under construction, planned — anything unopened draws hollow and dashed),
+and marks beside the label: step-free access, airport, national rail, ferry pier, bus
+station, park and ride. Any of them can be replaced by a symbol from your own library.
+
 **Out-of-station interchanges.** Select two stations and link them. They draw as a dashed
 connector with an optional note ("5 min walk"), and journeys can use them.
+
+**Assets are cut from your own map.** The art you want is already in the project, traced
+under the network — so **Crop** lets you drag a box over the map view and keep that
+region as a reusable symbol. It composites off every screenshot underneath, so a crop
+straddling two stitched tiles comes out whole. Assets can stand in for a station symbol
+or be dropped anywhere as a marker.
+
+**Map furniture.** A legend derived from the lines (so it cannot go stale), a title
+block, a north arrow, a scale bar and a poster frame. Each sits in both views, like
+everything else.
+
+**Route bullets take a shape** — roundel, circle, square, diamond or hexagon. Networks
+are recognised by this as much as by their colours.
+
+**Terrain does more than outlines.** Closed shapes take a fill — solid, hatch, stipple
+or outline only — and can have **holes** punched in them for an island in a lake. Fare
+zones are a terrain kind of their own. Free text is fully styleable: size, angle,
+colour, alignment, weight, italic and opacity.
 
 **Transport modes are editable.** Six ship as defaults — Metro, Rail, Tram, Bus, Ferry and
 Cable — each with its own colour, thickness, dash pattern, stop symbol and draw order. All
@@ -147,6 +197,7 @@ the lot.
 | Key | Action |
 | --- | --- |
 | <kbd>V</kbd> <kbd>S</kbd> <kbd>L</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>H</kbd> | Select · Station · Line · Terrain · Bend · Pan |
+| <kbd>1</kbd>–<kbd>7</kbd> | Network · Terrain · Screenshots · Assets · Journeys · Data · Checks |
 | <kbd>G</kbd> | Swap geographic ↔ schematic |
 | <kbd>F</kbd> | Zoom to fit (or to selection) |
 | <kbd>Alt</kbd> *(held)* | Suspend snapping |
@@ -154,7 +205,7 @@ the lot.
 | <kbd>?</kbd> | Keyboard shortcut reference |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | Undo / redo (<kbd>Ctrl</kbd>+<kbd>Y</kbd> also redoes) |
 | Arrows, <kbd>Shift</kbd>+arrows | Nudge 1px / 10px |
-| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete selected stations, or selected terrain |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the selection — stations, lines, terrain, transfers, screenshots or placements |
 | <kbd>Esc</kbd> | Cancel the current trace, then the selection |
 
 With the bend tool: click a segment to add a corner, <kbd>Alt</kbd>+click a segment to
@@ -183,7 +234,7 @@ src/
   persistence/   IndexedDB (projects + image blobs), file save/open, image import
   render/        one SVG surface for both views, plus its layers
   export/        SVG, PNG, a hand-written PDF writer, and a self-contained HTML page
-  ui/            toolbar, panels, inspector, command palette, hooks
+  ui/            shell (rail, panels, tools), inspector, command palette, hooks
 ```
 
 **History is patch-based.** Every mutation goes through `mutate()`, which records
