@@ -120,6 +120,23 @@ body {
   scrollbar-color: var(--color-slate-300) transparent;
 }
 
+/* Compact density.
+   Scoped to the chrome -- the rail, the panels and the top bar -- and never to the
+   canvas, whose sizes come from the project's own style settings and describe a
+   printed diagram rather than the editor around it. Tightening padding and type is
+   what buys back vertical room on a small screen or in a split window; shrinking the
+   rail alone, which is all the variables did on their own, was not worth a menu item. */
+[data-density="compact"] aside,
+[data-density="compact"] nav[aria-label="Editor sections"] {
+  font-size: var(--tds-ui-font);
+}
+[data-density="compact"] aside .p-3 { padding: 0.5rem; }
+[data-density="compact"] aside .px-3 { padding-left: 0.5rem; padding-right: 0.5rem; }
+[data-density="compact"] aside .py-2 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+[data-density="compact"] aside .space-y-3 > * + * { margin-top: 0.5rem; }
+[data-density="compact"] aside .space-y-4 > * + * { margin-top: 0.625rem; }
+[data-density="compact"] header .py-1\.5 { padding-top: 0.125rem; padding-bottom: 0.125rem; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
