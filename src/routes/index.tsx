@@ -148,7 +148,7 @@ function Library() {
                   Open the example map
                 </span>
                 <span className="mt-0.5 block text-[12px] text-slate-500">
-                  Five lines, a branching tram, a river and a handful of interchanges
+                  A whole city — 24 lines, six modes, a ring, an express and fifty interchanges
                 </span>
               </span>
               <span className="shrink-0 text-slate-300">→</span>

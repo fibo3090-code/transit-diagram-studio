@@ -21,6 +21,8 @@ import {
 } from './geometry'
 import { newBranchId, newLineId, newStationId } from './ids'
 import { normalizeProject } from './migrate'
+import { createSampleProject } from './sample'
+import { contentBounds } from '../export/exporters'
 import { placeLabels } from './labels'
 import { applyCsv, parseCsv } from './csv'
 import {
@@ -1152,6 +1154,95 @@ check('crossings ignore a line crossing itself', () => {
     { length: 3, height: 3 },
   )
   expect(one.length, 0, 'a line crossing itself needs no bridge: ')
+})
+
+// ---------------------------------------------------------------------------
+// The example, and the bounds that have to contain it
+// ---------------------------------------------------------------------------
+
+check('map furniture counts towards the content bounds', () => {
+  const p = createEmptyProject('b')
+  const s = station('A', 0, 0)
+  p.stations = [s]
+  p.lines = [line('L', [[s.id]])]
+  const bare = contentBounds(p, 'schematic', 0)
+  p.placements = [
+    {
+      id: 'pl_1' as never,
+      what: { kind: 'legend' },
+      geo: { x: 900, y: 0 },
+      schematic: { x: 900, y: 0 },
+      scale: 1,
+      angle: 0,
+      opacity: 1,
+      locked: false,
+      hidden: false,
+    },
+  ]
+  const withIt = contentBounds(p, 'schematic', 0)
+  assert(
+    withIt.maxX > bare.maxX,
+    'a legend in the margin must widen the bounds, or the export crops it away',
+  )
+})
+
+check('hidden furniture does not stretch the bounds', () => {
+  const p = createEmptyProject('b')
+  const s = station('A', 0, 0)
+  p.stations = [s]
+  p.lines = [line('L', [[s.id]])]
+  const bare = contentBounds(p, 'schematic', 0)
+  p.placements = [
+    {
+      id: 'pl_1' as never,
+      what: { kind: 'frame' },
+      geo: { x: 5000, y: 0 },
+      schematic: { x: 5000, y: 0 },
+      scale: 1,
+      angle: 0,
+      opacity: 1,
+      locked: false,
+      hidden: true,
+    },
+  ]
+  expect(contentBounds(p, 'schematic', 0).maxX, bare.maxX, 'hidden is hidden: ')
+})
+
+check('the example network is internally sound', () => {
+  const p = createSampleProject()
+  const net = buildNetwork(p)
+  const names = new Map<string, number>()
+  for (const s of p.stations) names.set(s.name, (names.get(s.name) ?? 0) + 1)
+  const dupes = [...names].filter(([, n]) => n > 1).map(([n]) => n)
+
+  expect(dupes, [], 'two stations sharing a name are two places with one identity: ')
+  expect(net.orphans.size, 0, 'every stop in the example is on a line: ')
+  assert(p.stations.length > 140, 'the example is a city, not a sketch')
+  assert(
+    validateProject(p, net).every((i) => i.severity === 'info'),
+    'the example must not ship with anything the checker flags',
+  )
+})
+
+check('the example exercises the features it claims to', () => {
+  const p = createSampleProject()
+  const modes = new Set(p.lines.map((l) => l.mode))
+  expect(modes.size, 6, 'all six transport modes: ')
+  assert(p.lines.some((l) => l.branches.some(isRing)), 'a ring')
+  assert(p.lines.some((l) => l.branches.some((b) => b.direction === 'forward')), 'a one-way branch')
+  assert(p.lines.some((l) => l.branches.some((b) => b.passes.length > 0)), 'an express')
+  assert(p.lines.some((l) => l.branches.some((b) => b.color)), 'a branch with its own colour')
+  assert(p.lines.some((l) => l.branches.some((b) => b.service)), 'a service label')
+  assert(p.lines.some((l) => l.branches.length > 1), 'a Y-shaped line')
+  assert(p.stations.some((s) => s.nameSecondary), 'a second name')
+  assert(p.stations.some((s) => s.badges.length > 0), 'station marks')
+  assert(p.stations.some((s) => s.status !== 'open'), 'something not yet open')
+  assert(p.stations.some((s) => s.zone), 'fare zones')
+  assert(p.terrain.some((t) => t.holes.length > 0), 'a shape with a hole')
+  assert(p.terrain.some((t) => t.fill === 'hatch'), 'hatching')
+  assert(p.terrain.some((t) => t.text), 'styled annotation')
+  assert(p.placements.length >= 4, 'map furniture')
+  assert(p.transfers.length > 0, 'an out-of-station link')
 })
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@
  */
 
 import { boundsSize, boundsValid, emptyBounds, growBounds, padBounds, type Bounds } from '../domain/geometry'
+import { placementDrawnExtent } from '../domain/furniture'
 import { modeById } from '../domain/defaults'
 import type { Space } from '../domain/network'
 import type { Project } from '../domain/types'
@@ -41,6 +42,16 @@ export function contentBounds(project: Project, space: Space, padding: number): 
   for (const line of project.lines) {
     for (const list of Object.values(line.bends)) {
       for (const bend of list) growBounds(b, bend[space])
+    }
+  }
+  // Furniture counts as content. Without this a legend or a title block placed in the
+  // margin renders on screen and is then cropped out of the export.
+  if (project.view.showPlacements) {
+    for (const pl of project.placements) {
+      if (pl.hidden) continue
+      const { w, h } = placementDrawnExtent(project, pl)
+      growBounds(b, { x: pl[space].x - w / 2, y: pl[space].y - h / 2 })
+      growBounds(b, { x: pl[space].x + w / 2, y: pl[space].y + h / 2 })
     }
   }
   if (space === 'geo') {

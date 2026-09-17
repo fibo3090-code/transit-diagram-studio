@@ -13,7 +13,7 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 83 domain checks (pure logic, no browser) |
+| `npm test` | 87 domain checks (pure logic, no browser) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
 
@@ -22,8 +22,9 @@ The build is entirely static. `dist/` can be opened from disk or dropped on any 
 ## Start here
 
 Open the **example map** from the front page before anything else. It is a finished
-five-line network with a branching tram, a river and several interchanges — the quickest
-way to see what the tool produces before facing a blank canvas.
+city — 159 stops on 24 lines across all six modes, with a ring, an express, a one-way
+loop and fifty interchanges — and it is the quickest way to see what the tool produces
+before facing a blank canvas. Every feature described below appears somewhere in it.
 
 A new map opens with two clear ways to begin, and a coach in the corner names the single
 next useful step until you dismiss it.

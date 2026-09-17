@@ -42,6 +42,7 @@ import type {
   TerrainId,
   Vec2,
 } from '../domain/types'
+import { placementDrawnExtent } from '../domain/furniture'
 import { blobUrl } from '../persistence/idb'
 
 // ---------------------------------------------------------------------------
@@ -1620,16 +1621,15 @@ export function PlacementLayer({
         const isSel = selected.has(pl.id)
         const hit = (e: React.PointerEvent) => onPointerDown(e, pl.id)
 
+        // Sizes come from the shared helper so the selection box, the export bounds
+        // and the drawing can never disagree about how big a thing is.
+        const { w, h } = placementDrawnExtent(project, pl)
         let body: React.ReactNode = null
-        let w = 0
-        let h = 0
 
         if (pl.what.kind === 'asset') {
           const a = assetByKey.get(pl.what.assetId)
           const url = a ? urls[a.blobKey] : undefined
           if (a) {
-            w = a.width
-            h = a.height
             body = url ? (
               <image href={url} x={-w / 2} y={-h / 2} width={w} height={h} />
             ) : (
@@ -1638,7 +1638,6 @@ export function PlacementLayer({
           }
         } else if (pl.what.kind === 'northArrow') {
           const r = 22
-          w = h = r * 2
           body = (
             <g>
               <circle r={r} fill={background} stroke={foreground} strokeWidth={1.2} opacity={0.9} />
@@ -1650,8 +1649,6 @@ export function PlacementLayer({
           )
         } else if (pl.what.kind === 'scaleBar') {
           const unit = 100
-          w = unit * 2
-          h = 18
           body = (
             <g>
               <rect x={-w / 2} y={-3} width={unit} height={6} fill={foreground} />
@@ -1667,8 +1664,6 @@ export function PlacementLayer({
           // step with the lines it describes -- the same rule the network follows.
           const rows = project.lines.filter((l) => !l.hidden)
           const rowH = fontSize * 1.75
-          w = 210
-          h = rowH * (rows.length + 1) + 12
           body = (
             <g>
               <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={8} fill={background} stroke={foreground} strokeOpacity={0.18} />
@@ -1699,8 +1694,6 @@ export function PlacementLayer({
             </g>
           )
         } else if (pl.what.kind === 'titleBlock') {
-          w = 280
-          h = 74
           body = (
             <g>
               <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={6} fill={background} stroke={foreground} strokeOpacity={0.18} />
@@ -1713,8 +1706,6 @@ export function PlacementLayer({
             </g>
           )
         } else if (pl.what.kind === 'frame') {
-          w = 900
-          h = 640
           body = (
             <g>
               <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="none" stroke={foreground} strokeWidth={3} opacity={0.75} />
