@@ -3,14 +3,18 @@
  *
  * Real transit maps do not draw every station the same way. A stop on one line is a
  * tick; a place where several lines meet is a filled interchange; and where several
- * lines run through side by side, the symbol becomes a BAR laid across the corridor,
- * spanning every parallel stroke, so one shape reads as one place.
+ * lines STOP side by side, the symbol becomes a BAR laid across those tracks, so one
+ * shape reads as one place.
+ *
+ * Only the lines that actually call are counted. A line running through without
+ * stopping keeps its stroke unbroken and gets no part of the symbol, which is the
+ * whole visual point of an express.
  *
  * All of it is derived from the graph — nothing here is stored.
  */
 
 import { modeById } from './defaults'
-import { dist, norm, perp, rectHitsSegment, sub } from './geometry'
+import { add, dist, mul, norm, perp, rectHitsSegment, sub } from './geometry'
 import {
   branchGeometry,
   isForward,
@@ -20,6 +24,7 @@ import {
   type Space,
 } from './network'
 import type {
+  LineId,
   Project,
   Station,
   StationId,
@@ -37,8 +42,37 @@ export type SymbolShape =
       symbol: StationSymbolKind
       /** Direction across the track, for a tick mark. */
       across: Vec2
+      /** Nudge onto the track that actually stops here, when an express runs beside. */
+      shift: Vec2
     }
-  | { kind: 'interchange'; radius: number }
+  | { kind: 'interchange'; radius: number; shift: Vec2 }
+  /**
+   * One mark per calling service, each on its own track.
+   *
+   * Used where a corridor carries lines that do NOT all stop. A single shared symbol
+   * cannot express that: whatever shape is drawn, it sits across tracks belonging to
+   * services that run straight past, and reads as "everything stops here".
+   *
+   * This is the New York convention, and the instruction the MTA actually gives its
+   * riders is the giveaway — check that your service has a dot at the station. The dot
+   * belongs to the service, not to the place.
+   */
+  | {
+      kind: 'perService'
+      radius: number
+      marks: { at: Vec2; color: string }[]
+      /**
+       * A thin tie joining the marks, so the group still reads as ONE place.
+       *
+       * Without it a junction where something runs past dissolves into loose dots.
+       * Linked dots are how transfer stations are drawn on the New York map, and the
+       * two devices answer different questions: the tie says "this is one station",
+       * each dot says "this service stops at it".
+       */
+      tie: { from: Vec2; to: Vec2 } | null
+      /** The tracks that run past, so the renderer can leave them alone. */
+      passing: number
+    }
   | { kind: 'bar'; center: Vec2; dir: Vec2; halfLength: number; thickness: number }
   | { kind: 'orphan'; radius: number }
 
@@ -53,40 +87,160 @@ export interface StationSymbol {
  * Average direction of the corridors meeting at a station, and the widest parallel
  * bundle running through it. The bundle is what a bar has to span.
  */
+interface CorridorAtStation {
+  dir: Vec2
+  /** How many of the corridor's lines actually CALL here. */
+  parallel: number
+  /** How many run past without calling. */
+  passing: number
+  /** Lateral offset of the middle of the calling tracks, in diagram units. */
+  shift: number
+  /** Half the lateral spread of the calling tracks. */
+  spread: number
+  /** Each calling line and the track it sits on, in canonical direction. */
+  offsets: { lineId: LineId; offset: number }[]
+  /** True when this station is the far end of the segment key, so offsets mirror. */
+  mirrored: boolean
+}
+
+/**
+ * The busiest corridor through a station, and where the tracks that stop there sit
+ * within it.
+ *
+ * The distinction matters as soon as an express exists. A corridor may carry four
+ * lines while only two of them call, and the stop belongs to those two: it is drawn on
+ * their tracks, spanning only them, with the express running past untouched. Counting
+ * every line in the corridor instead put a bar right across the express as well, which
+ * reads as "everything stops here" — the opposite of what an express is.
+ */
 function corridorAt(
   project: Project,
   network: Network,
   station: Station,
   space: Space,
-): { dir: Vec2; parallel: number } | null {
+): CorridorAtStation | null {
   const neighbours = [...(network.neighbours.get(station.id) ?? [])]
   if (neighbours.length === 0) return null
+
+  const calling = new Set(network.linesAtStation.get(station.id) ?? [])
+  const spacing = project.style.corridorSpacing
 
   let bestKey: string | null = null
   let bestCount = 0
   for (const n of neighbours) {
     const key = segmentKey(station.id, n)
-    const count = network.corridors.get(key)?.length ?? 0
+    // Rank corridors by how many lines stop here, not by how many pass through.
+    const count = (network.corridors.get(key) ?? []).filter((id) => calling.has(id)).length
     if (count > bestCount) {
       bestCount = count
       bestKey = key
     }
   }
-  if (!bestKey || bestCount < 2) {
-    return { dir: { x: 1, y: 0 }, parallel: bestCount }
-  }
 
-  // Direction of the busiest corridor, measured toward the neighbour on it.
+  const flat = (parallel: number, shift = 0, spread = 0): CorridorAtStation => ({
+    dir: { x: 1, y: 0 },
+    parallel,
+    passing: 0,
+    shift,
+    spread,
+    offsets: [],
+    mirrored: false,
+  })
+
+  if (!bestKey) return flat(bestCount)
+
+  // Where the calling tracks sit across the bundle, and how many run past.
+  const offsets = network.offsets.get(bestKey)
+  const inCorridor = network.corridors.get(bestKey) ?? []
+  const callingOffsets = inCorridor
+    .filter((id) => calling.has(id))
+    .map((id) => ({ lineId: id, offset: offsets?.get(id) ?? 0 }))
+  const passing = inCorridor.length - callingOffsets.length
+  const mine = callingOffsets.map((o) => o.offset)
+  const lo = mine.length ? Math.min(...mine) : 0
+  const hi = mine.length ? Math.max(...mine) : 0
+  const shift = mine.length ? (lo + hi) / 2 : 0
+  const spread = mine.length ? (hi - lo) / 2 : 0
+  void spacing
+
+  // Direction of that corridor, measured toward the neighbour on it.
   const other = neighbours.find((n) => segmentKey(station.id, n) === bestKey)
-  if (!other) return { dir: { x: 1, y: 0 }, parallel: bestCount }
-  const target = project.stations.find((s) => s.id === other)
-  if (!target) return { dir: { x: 1, y: 0 }, parallel: bestCount }
+  const target = other ? project.stations.find((s) => s.id === other) : undefined
+  const usable =
+    !!other && !!target && dist(target[space], station[space]) >= 1e-6
 
-  const d = sub(target[space], station[space])
-  if (dist(target[space], station[space]) < 1e-6) {
-    return { dir: { x: 1, y: 0 }, parallel: bestCount }
+  if (!usable) {
+    return { ...flat(bestCount, shift, spread), passing, offsets: callingOffsets }
   }
-  return { dir: norm(d), parallel: bestCount }
+
+  // The offsets are stored in the segment key's canonical direction; if this station
+  // is the far end of the key, the bundle is mirrored as seen from here.
+  const mirrored = station.id > other!
+  return {
+    dir: norm(sub(target![space], station[space])),
+    parallel: bestCount,
+    passing,
+    shift: mirrored ? -shift : shift,
+    spread,
+    offsets: callingOffsets,
+    mirrored,
+  }
+}
+
+/**
+ * One mark per calling service, each on the track it uses at this station.
+ *
+ * Walks every corridor meeting the station rather than only the busiest, so a line
+ * arriving from the north and a line arriving from the west each get a dot on their
+ * own stroke. Anything present in a corridor here but not calling is counted as
+ * passing, which is what switches the symbol to this form in the first place.
+ */
+function serviceMarks(
+  project: Project,
+  network: Network,
+  station: Station,
+  space: Space,
+): { marks: { at: Vec2; color: string }[]; passing: number } {
+  const calling = new Set(network.linesAtStation.get(station.id) ?? [])
+  const neighbours = [...(network.neighbours.get(station.id) ?? [])]
+
+  const placed = new Map<LineId, Vec2>()
+  const runsPast = new Set<LineId>()
+
+  for (const n of neighbours) {
+    const key = segmentKey(station.id, n)
+    const inCorridor = network.corridors.get(key) ?? []
+    if (inCorridor.length === 0) continue
+
+    const target = project.stations.find((s) => s.id === n)
+    if (!target || dist(target[space], station[space]) < 1e-6) continue
+    const dir = norm(sub(target[space], station[space]))
+    const across = perp(dir)
+    // Offsets are stored in the key's canonical direction, which is mirrored when this
+    // station is the far end of it.
+    const mirrored = station.id > n
+    const offsets = network.offsets.get(key)
+
+    for (const id of inCorridor) {
+      if (!calling.has(id)) {
+        runsPast.add(id)
+        continue
+      }
+      if (placed.has(id)) continue
+      const o = offsets?.get(id) ?? 0
+      placed.set(id, mul(across, mirrored ? -o : o))
+    }
+  }
+
+  const order = project.lines.map((l) => l.id)
+  const marks = [...placed.entries()]
+    .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+    .map(([id, at]) => ({
+      at,
+      color: project.lines.find((l) => l.id === id)?.color ?? project.style.foreground,
+    }))
+
+  return { marks, passing: runsPast.size }
 }
 
 export function stationSymbol(
@@ -105,19 +259,64 @@ export function stationSymbol(
 
   const corridor = corridorAt(project, network, station, space)
 
-  // Several lines running through side by side: one bar across the whole bundle.
+  // The symbol sits on the tracks that stop here, which is not always the middle of
+  // the bundle: an express running alongside shifts the calling tracks to one side.
+  const across = corridor ? mul(perp(corridor.dir), corridor.shift) : { x: 0, y: 0 }
+  const centre = add(station[space], across)
+
+  // Where anything runs past without calling, every calling service gets its own mark
+  // on its own track and the rest are left clean. See `perService`.
+  //
+  // Marks are gathered across ALL the corridors meeting here, not just the busiest one:
+  // the lines that stop at a junction arrive from different directions, and each needs
+  // its dot on the track it actually uses.
+  const service = serviceMarks(project, network, station, space)
+  if (service.passing > 0 && service.marks.length > 0) {
+    // Tie the marks together along the line through the two furthest apart, so the
+    // group reads as one station rather than a scatter of dots.
+    let tie: { from: Vec2; to: Vec2 } | null = null
+    if (service.marks.length > 1) {
+      let a = service.marks[0].at
+      let b = service.marks[0].at
+      let best = -1
+      for (const m of service.marks) {
+        for (const n of service.marks) {
+          const d = dist(m.at, n.at)
+          if (d > best) {
+            best = d
+            a = m.at
+            b = n.at
+          }
+        }
+      }
+      if (best > 0.5) tie = { from: a, to: b }
+    }
+
+    return {
+      shape: {
+        kind: 'perService',
+        radius: r * 0.78,
+        passing: service.passing,
+        marks: service.marks,
+        tie,
+      },
+      terminus,
+      lineCount: lines.length,
+    }
+  }
+
+  // Several lines CALLING side by side: one bar across just those.
   if (corridor && corridor.parallel > 1) {
-    const spacing = project.style.corridorSpacing
     const widest = project.lines.reduce((max, l) => {
       if (l.hidden) return max
       const w = modeById(project.modes, l.mode).strokeWidth * project.style.strokeScale
       return Math.max(max, w)
     }, 0)
-    const half = ((corridor.parallel - 1) * spacing) / 2 + widest / 2 + 2
+    const half = corridor.spread + widest / 2 + 2
     return {
       shape: {
         kind: 'bar',
-        center: station[space],
+        center: centre,
         // The bar lies ACROSS the corridor, so it runs along the perpendicular.
         dir: perp(corridor.dir),
         halfLength: half,
@@ -129,7 +328,11 @@ export function stationSymbol(
   }
 
   if (lines.length > 1) {
-    return { shape: { kind: 'interchange', radius: r * 1.45 }, terminus, lineCount: lines.length }
+    return {
+      shape: { kind: 'interchange', radius: r * 1.45, shift: across },
+      terminus,
+      lineCount: lines.length,
+    }
   }
 
   const only = project.lines.find((l) => l.id === lines[0])
@@ -143,6 +346,7 @@ export function stationSymbol(
       filled: terminus,
       symbol: mode?.stationSymbol ?? 'circle',
       across: corridor ? perp(corridor.dir) : { x: 0, y: 1 },
+      shift: across,
     },
     terminus,
     lineCount: 1,

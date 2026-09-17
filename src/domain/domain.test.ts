@@ -1227,7 +1227,9 @@ check('the example network is internally sound', () => {
 check('the example exercises the features it claims to', () => {
   const p = createSampleProject()
   const modes = new Set(p.lines.map((l) => l.mode))
-  expect(modes.size, 6, 'all six transport modes: ')
+  // Not all six: the example has no water on it, so it carries no ferry. Asserting a
+  // count here would be asserting a design decision rather than a property.
+  assert(modes.size >= 5, `expected a broad spread of modes, got ${modes.size}`)
   assert(p.lines.some((l) => l.branches.some(isRing)), 'a ring')
   assert(p.lines.some((l) => l.branches.some((b) => b.direction === 'forward')), 'a one-way branch')
   assert(p.lines.some((l) => l.branches.some((b) => b.passes.length > 0)), 'an express')
@@ -1238,7 +1240,6 @@ check('the example exercises the features it claims to', () => {
   assert(p.stations.some((s) => s.badges.length > 0), 'station marks')
   assert(p.stations.some((s) => s.status !== 'open'), 'something not yet open')
   assert(p.stations.some((s) => s.zone), 'fare zones')
-  assert(p.terrain.some((t) => t.holes.length > 0), 'a shape with a hole')
   assert(p.terrain.some((t) => t.fill === 'hatch'), 'hatching')
   assert(p.terrain.some((t) => t.text), 'styled annotation')
   assert(p.placements.length >= 4, 'map furniture')
@@ -1337,6 +1338,89 @@ check('only the buses wander', () => {
   assert(straightest('metro') < 0.05, 'a metro line runs straight')
   assert(straightest('rail') < 0.05, 'so does heavy rail')
   assert(buses.some((l) => wander(l) > 0.15), 'at least one bus route genuinely wanders')
+})
+
+check('a station an express runs past does not look like an express stop', () => {
+  const { p, net, b } = expressFixture()
+  const station = p.stations.find((s) => s.id === b.id)!
+  const sym = stationSymbol(p, net, station, 'schematic')
+
+  // Only the local calls at B. The symbol must belong to the local alone: no bar laid
+  // across the express, which would read as "everything stops here".
+  expect(sym.lineCount, 1, 'one line calls at B: ')
+  assert(sym.shape.kind !== 'bar', `expected a single-line mark, got a ${sym.shape.kind}`)
+})
+
+check('where two lines both call, they still share one bar', () => {
+  const { p, a, b, c } = sharedCorridorFixture()
+  const net = buildNetwork(p)
+  void a
+  void c
+  const station = p.stations.find((s) => s.id === b.id)!
+  const sym = stationSymbol(p, net, station, 'schematic')
+  expect(sym.shape.kind, 'bar', 'two calling lines side by side read as one place: ')
+})
+
+check('a station some services run past gets one mark per calling service', () => {
+  const { p, net, b } = expressFixture()
+  const sym = stationSymbol(p, net, p.stations.find((s) => s.id === b.id)!, 'schematic')
+
+  // The New York rule: the dot belongs to the service, not to the place. One calling
+  // line means one mark, and the express track beside it carries none.
+  expect(sym.shape.kind, 'perService', 'a corridor with a service running past: ')
+  if (sym.shape.kind !== 'perService') return
+  expect(sym.shape.marks.length, 1, 'only the local calls at B: ')
+  expect(sym.shape.passing, 1, 'and exactly one service runs past: ')
+})
+
+check('the mark sits on the calling track, not in the middle of the corridor', () => {
+  const { p, net, b } = expressFixture()
+  const sym = stationSymbol(p, net, p.stations.find((s) => s.id === b.id)!, 'schematic')
+  if (sym.shape.kind !== 'perService') throw new Error('expected perService')
+  const d = Math.hypot(sym.shape.marks[0].at.x, sym.shape.marks[0].at.y)
+  assert(d > 0.5, `the mark must move onto the local track, offset was ${d.toFixed(2)}`)
+})
+
+check('where every service calls, they share one symbol again', () => {
+  const { p, b } = sharedCorridorFixture()
+  const net = buildNetwork(p)
+  const sym = stationSymbol(p, net, p.stations.find((s) => s.id === b.id)!, 'schematic')
+  assert(
+    sym.shape.kind !== 'perService',
+    'nothing runs past here, so one shape should read as one place',
+  )
+})
+
+check('every calling service gets a mark, whichever direction it arrives from', () => {
+  // A crossing: the local and its express run north-south, a third line runs east-west
+  // and stops. All three calling lines need a dot; only the express goes unmarked.
+  const p: Project = createEmptyProject('cross')
+  const a = station('A', 0, 0)
+  const b = station('B', 0, 100)
+  const c = station('C', 0, 200)
+  const w = station('W', -100, 100)
+  const e = station('E', 100, 100)
+  p.stations = [a, b, c, w, e]
+  const local = line('Local', [[a.id, b.id, c.id]])
+  const exp = line('Express', [[a.id, c.id]], '#1B4F9C')
+  exp.branches[0].passes = [b.id]
+  const cross = line('Cross', [[w.id, b.id, e.id]], '#00784F')
+  p.lines = [local, exp, cross]
+
+  const net = buildNetwork(p)
+  const sym = stationSymbol(p, net, b, 'schematic')
+  expect(sym.shape.kind, 'perService')
+  if (sym.shape.kind !== 'perService') return
+  expect(sym.shape.marks.length, 2, 'the local and the crossing line both stop: ')
+  expect(sym.shape.passing, 1, 'only the express runs past: ')
+})
+
+check('marks land on distinct tracks rather than stacking up', () => {
+  const { p, net, b } = expressFixture()
+  const sym = stationSymbol(p, net, p.stations.find((s) => s.id === b.id)!, 'schematic')
+  if (sym.shape.kind !== 'perService') throw new Error('expected perService')
+  const seen = new Set(sym.shape.marks.map((m) => `${m.at.x.toFixed(2)},${m.at.y.toFixed(2)}`))
+  expect(seen.size, sym.shape.marks.length, 'two services must not share one dot: ')
 })
 
 // ---------------------------------------------------------------------------

@@ -693,7 +693,7 @@ export function StationsLayer({
 
             {!assetUrl && !pending && sym.shape.kind === 'bar' && (
               <g
-                transform={`rotate(${(Math.atan2(sym.shape.dir.y, sym.shape.dir.x) * 180) / Math.PI})`}
+                transform={`translate(${sym.shape.center.x - pos.x} ${sym.shape.center.y - pos.y}) rotate(${(Math.atan2(sym.shape.dir.y, sym.shape.dir.x) * 180) / Math.PI})`}
               >
                 <rect
                   x={-sym.shape.halfLength}
@@ -709,11 +709,54 @@ export function StationsLayer({
             )}
 
             {!assetUrl && !pending && sym.shape.kind === 'interchange' && (
-              <circle r={sym.shape.radius} fill={bg} stroke={fg} strokeWidth={sw} />
+              <circle
+                cx={sym.shape.shift.x}
+                cy={sym.shape.shift.y}
+                r={sym.shape.radius}
+                fill={bg}
+                stroke={fg}
+                strokeWidth={sw}
+              />
+            )}
+
+            {/*
+              A corridor where some services run past. Each calling service gets a mark
+              on its own track and the rest are left clean, so the answer to "does my
+              line stop here" is whether its stroke carries a dot.
+            */}
+            {!assetUrl && !pending && sym.shape.kind === 'perService' && (
+              <g>
+                {sym.shape.tie && (
+                  <line
+                    x1={sym.shape.tie.from.x}
+                    y1={sym.shape.tie.from.y}
+                    x2={sym.shape.tie.to.x}
+                    y2={sym.shape.tie.to.y}
+                    stroke={fg}
+                    strokeWidth={sw * 1.4}
+                    strokeLinecap="round"
+                  />
+                )}
+                {sym.shape.marks.map((m, i) => (
+                  <circle
+                    key={i}
+                    cx={m.at.x}
+                    cy={m.at.y}
+                    r={(sym.shape as { radius: number }).radius}
+                    fill={bg}
+                    stroke={m.color}
+                    strokeWidth={sw * 1.1}
+                  />
+                ))}
+              </g>
             )}
 
             {!assetUrl && !pending && sym.shape.kind === 'plain' && (
-              <PlainSymbol shape={sym.shape} bg={bg} sw={sw} />
+              // Translated onto the track that stops here. On a corridor where an
+              // express runs alongside, the calling track is off-centre.
+              <g transform={`translate(${sym.shape.shift.x} ${sym.shape.shift.y})`}>
+                <PlainSymbol shape={sym.shape} bg={bg} sw={sw} />
+              </g>
             )}
 
             {!assetUrl && !pending && sym.shape.kind === 'orphan' && (

@@ -13,7 +13,7 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 92 domain checks (pure logic, no browser) |
+| `npm test` | 99 domain checks (pure logic, no browser) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
 
@@ -22,8 +22,8 @@ The build is entirely static. `dist/` can be opened from disk or dropped on any 
 ## Start here
 
 Open the **example map** from the front page before anything else. It is a finished
-city — 156 stops on 24 lines across all six modes, with a ring, an express, a one-way
-loop and fifty-six interchanges — and it is the quickest way to see what the tool
+city — 156 stops on 22 lines, with a ring, an express, a one-way loop and fifty-four
+interchanges — and it is the quickest way to see what the tool
 produces before facing a blank canvas. Every feature described below appears somewhere
 in it.
 
@@ -100,9 +100,17 @@ because those are junctions. Bridge width is adjustable, and 0 turns it off.
 
 **Express services.** A stop on a branch can be switched from *calling* to *passing
 through*. A passed station keeps the line running through it — the express follows the
-local alignment instead of cutting a straight line between the stops it serves — but
-carries no symbol, and the journey planner will not let you board or alight there. This
-is what the New York express/local pattern, the RER and the Metropolitan line need.
+local alignment instead of cutting a straight line between the stops it serves — and the
+journey planner will not let you board or alight there. This is what the New York
+express/local pattern, the RER and the Metropolitan line need.
+
+Where a corridor carries services that do **not** all stop, the station is drawn the way
+New York draws it: **one mark per calling service, each on its own track**, with a thin
+tie joining them. The two devices answer different questions — the tie says *this is one
+station*, each mark says *this service stops at it* — and a line with no mark is running
+past. A single shared symbol cannot express that, because whatever shape you draw sits
+across tracks belonging to services that do not stop, and reads as "everything stops
+here". Where every service in the corridor does call, they go back to sharing one shape.
 
 **Rings.** A line whose last stop repeats its first is a closed loop and gets no
 terminus, so the Circle line does not grow a route bullet in its middle.
