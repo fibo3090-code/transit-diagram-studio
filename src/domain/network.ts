@@ -117,6 +117,7 @@ export function buildNetwork(project: Project): Network {
   project.lines.forEach((l, i) => lineOrder.set(l.id, i))
 
   const known = new Set<StationId>(project.stations.map((s) => s.id))
+  const stationPositions = stationMap(project)
 
   const corridorSets = new Map<string, Set<LineId>>()
   const linesAt = new Map<StationId, Set<LineId>>()
@@ -139,6 +140,7 @@ export function buildNetwork(project: Project): Network {
       const stops = branch.stops.filter((id) => known.has(id))
       if (stops.length === 0) continue
 
+      // Where it CALLS drives interchanges and termini...
       stops.forEach((id, i) => {
         touch(linesAt, id).add(line.id)
         if (i > 0 && i < stops.length - 1) touch(interiors, line.id).add(id)
@@ -150,9 +152,13 @@ export function buildNetwork(project: Project): Network {
         touch(endpoints, line.id).add(stops[stops.length - 1])
       }
 
-      for (let i = 0; i < stops.length - 1; i++) {
-        const a = stops[i]
-        const b = stops[i + 1]
+      // ...but where it RUNS drives corridors, so an express and the local beside it
+      // agree on which segments they share and get parallel offsets rather than
+      // stacking on top of one another.
+      const { ids: through } = branchSequence(branch, stationPositions, 'schematic')
+      for (let i = 0; i < through.length - 1; i++) {
+        const a = through[i]
+        const b = through[i + 1]
         if (a === b) continue
         touch(corridorSets, segmentKey(a, b)).add(line.id)
         touch(neighbours, a).add(b)
@@ -272,6 +278,51 @@ function passedAlong(
 }
 
 /**
+ * The stations a branch physically runs through, in order, calls and pass-throughs
+ * alike.
+ *
+ * This is what a branch actually occupies, as opposed to where it stops, and both the
+ * corridor map and the drawn geometry are built from it.
+ *
+ * Getting that wrong is subtle and very visible: an express calling at A and D while
+ * running through B and C used to register one corridor A-D, while the local beside it
+ * registered A-B, B-C, C-D. No key matched, so neither line knew it shared a corridor,
+ * both took offset zero, and the express was drawn straight over the top of the local
+ * instead of alongside it.
+ */
+export function branchSequence(
+  branch: Branch,
+  stations: Map<StationId, Station>,
+  space: Space,
+): { ids: StationId[]; calls: boolean[] } {
+  const stops = branch.stops.filter((id) => stations.has(id))
+  const ids: StationId[] = []
+  const calls: boolean[] = []
+  if (stops.length === 0) return { ids, calls }
+
+  const served = new Set(stops)
+  const candidates = (branch.passes ?? [])
+    .filter((id) => stations.has(id) && !served.has(id))
+    .map((id) => ({ id, at: stations.get(id)![space] }))
+
+  ids.push(stops[0])
+  calls.push(true)
+
+  for (let i = 1; i < stops.length; i++) {
+    const a = stops[i - 1]
+    const b = stops[i]
+    if (a === b) continue
+    for (const skipped of passedAlong(stations.get(a)![space], stations.get(b)![space], candidates)) {
+      ids.push(skipped.id)
+      calls.push(false)
+    }
+    ids.push(b)
+    calls.push(true)
+  }
+  return { ids, calls }
+}
+
+/**
  * Build the raw centreline for a branch plus the offset each segment should be drawn
  * at. The offsets stored in `Network` are canonical (direction-free) so that every line
  * sharing a corridor agrees on who sits where; here they are converted to
@@ -322,17 +373,27 @@ export function branchGeometry(
     }
 
     // Stations this branch runs through without calling. They join the centreline as
-    // ordinary vertices and carry no entry in `stopIndices`, which is what keeps them
-    // out of the symbol layer while still bending the route through them.
+    // ordinary vertices and carry no entry in `stopIndices`, which keeps them out of
+    // the symbol layer while still bending the route through them.
+    //
+    // Each sub-segment takes the offset of the corridor it is actually in, so an
+    // express weaving past a local stays the right distance from it the whole way.
     const from = stations.get(a)![space]
     const to = stations.get(b)![space]
+    let prev = a
     for (const skipped of passedAlong(from, to, passCandidates)) {
+      const subKey = segmentKey(prev, skipped.id)
+      const subCanonical = network.offsets.get(subKey)?.get(line.id) ?? canonical
       points.push({ ...skipped.at })
-      offsets.push(travel)
+      offsets.push(isForward(prev, skipped.id) ? subCanonical : -subCanonical)
+      prev = skipped.id
     }
+    const lastKey = segmentKey(prev, b)
+    const lastCanonical = network.offsets.get(lastKey)?.get(line.id) ?? canonical
+    const lastTravel = isForward(prev, b) ? lastCanonical : -lastCanonical
 
     points.push({ ...stations.get(b)![space] })
-    offsets.push(travel)
+    offsets.push(lastTravel)
     stopIndices.push(points.length - 1)
     kept.push(b)
   }

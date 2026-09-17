@@ -6,18 +6,34 @@
  * controls are for. Opening a finished network first answers both questions in a second,
  * and gives you something safe to pull apart.
  *
- * It is deliberately a whole city rather than a sketch, because every feature in the app
- * has to be visible in it to be discoverable at all. Between them the lines below
- * exercise: all six transport modes, a Y-shaped branch, a closed ring with no terminus,
- * an express that runs through the stations it skips, a one-way loop, a branch with its
- * own colour and its own service label, shared corridors with parallel offsets, bar
- * interchanges, out-of-station walking links, crossings, fare zones, second names,
- * accessibility marks, stations not yet open, terrain with holes and hatching, styled
- * annotations, and a legend that derives itself from the lines.
+ * It is a whole city rather than a sketch, because a feature nobody can see in the first
+ * thirty seconds may as well not exist. Between them the lines below use all six modes,
+ * a Y-shaped branch, a ring with no terminus, an express that runs through the stations
+ * it skips, a one-way loop, branch colours and service labels, shared corridors, bar
+ * interchanges, out-of-station links, fare zones, second names, accessibility marks,
+ * stations not yet open, terrain with holes and hatching, styled annotations, and a
+ * legend that derives itself from the lines.
  *
- * Everything is laid out on a 60-unit grid so corridors meet at exact coordinates. That
- * is what makes the interchanges real: two lines sharing a point share a station, with
- * no bookkeeping.
+ * ## Why it is shaped the way it is
+ *
+ * One authoring unit is roughly 8 metres, so the 60-unit grid below is about 500 m. Stop
+ * spacing is what makes a network read as the thing it is, and it is the first thing an
+ * invented map gets wrong:
+ *
+ *   heavy rail   240 units (~2 km)    fewest stops, greatest reach, out to the edges
+ *   metro        120-170 (~1-1.4 km)  direct, straight, through the middle
+ *   tram          60 units (~500 m)   most stops, inner city only, short routes
+ *   bus           60 units (~500 m)   many stops AND a wandering route
+ *   ferry            a few piers      wide spacing along the water
+ *   cable            2-3 stops        one climb
+ *
+ * So the rail lines here have the fewest stops over the greatest distance, the trams the
+ * most over the least, and the buses are the only routes on the map that do not travel
+ * in a straight line — they exist to reach what the rapid modes miss, which is exactly
+ * why a bus route bends and a metro does not.
+ *
+ * Everything meets on the grid, so two corridors quoting the same coordinate share a
+ * station. Every interchange on the map arises that way; none are declared.
  */
 
 import {
@@ -50,18 +66,18 @@ function scatter(p: Vec2, i: number): Vec2 {
   const a = Math.sin(i * 12.9898) * 43758.5453
   const b = Math.sin(i * 78.233) * 12345.6789
   return {
-    x: Math.round(p.x + (a - Math.floor(a) - 0.5) * 110),
-    y: Math.round(p.y + (b - Math.floor(b) - 0.5) * 110),
+    x: Math.round(p.x + (a - Math.floor(a) - 0.5) * 120),
+    y: Math.round(p.y + (b - Math.floor(b) - 0.5) * 120),
   }
 }
 
-/** Centre of the city, used to work out which fare zone a stop falls in. */
-const HUB: Vec2 = { x: 720, y: 460 }
+/** The hub. Fare zones are rings around it. */
+const HUB: Vec2 = { x: 840, y: 540 }
 
 function zoneFor(p: Vec2): string {
-  const d = Math.max(Math.abs(p.x - HUB.x) / 1.35, Math.abs(p.y - HUB.y))
-  if (d <= 250) return '1'
-  if (d <= 420) return '2'
+  const d = Math.max(Math.abs(p.x - HUB.x) / 1.4, Math.abs(p.y - HUB.y))
+  if (d <= 240) return '1'
+  if (d <= 400) return '2'
   return '3'
 }
 
@@ -74,358 +90,411 @@ export function createSampleProject(): Project {
   const byName = new Map<string, StationId>()
   let seq = 0
 
-  /**
-   * A station at a point, created once.
-   *
-   * Two corridors quoting the same coordinate get the same station, which is how every
-   * interchange on this map comes about — nothing declares them.
-   */
+  /** A station at a point, created once. Two corridors at one point share it. */
   const at = (x: number, y: number, name: string, extra: Partial<Station> = {}): StationId => {
     const key = `${x},${y}`
     const found = byPoint.get(key)
     if (found) {
-      if (Object.keys(extra).length > 0) {
-        const s = stations.find((q) => q.id === found)!
-        Object.assign(s, extra)
-      }
+      if (Object.keys(extra).length > 0) Object.assign(stations.find((q) => q.id === found)!, extra)
       return found
     }
     const id = newStationId()
     seq++
-    const st = makeStation(id, name, { x, y }, {
-      geo: scatter({ x, y }, seq),
-      zone: zoneFor({ x, y }),
-      ...extra,
-    })
-    stations.push(st)
+    stations.push(
+      makeStation(id, name, { x, y }, {
+        geo: scatter({ x, y }, seq),
+        zone: zoneFor({ x, y }),
+        ...extra,
+      }),
+    )
     byPoint.set(key, id)
     byName.set(name, id)
     return id
   }
 
-  /** Evenly spaced stops along a straight run, named from the list. */
-  const run = (
-    from: Vec2,
-    step: Vec2,
-    names: (string | [string, Partial<Station>])[],
-  ): StationId[] =>
-    names.map((entry, i) => {
+  type Named = string | [string, Partial<Station>]
+
+  /**
+   * Stops along a route at a fixed spacing, following however many legs it takes.
+   *
+   * A straight run is one leg. A bus route that doglegs round a park is several — and
+   * that difference is most of what separates a bus from a metro, so it has to be as
+   * easy to write as a straight line.
+   */
+  const route = (waypoints: Vec2[], spacing: number, names: Named[]): StationId[] => {
+    const points: Vec2[] = []
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const a = waypoints[i]
+      const b = waypoints[i + 1]
+      const steps = Math.max(1, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / spacing))
+      for (let k = 0; k < steps; k++) {
+        points.push({
+          x: Math.round(a.x + ((b.x - a.x) * k) / steps),
+          y: Math.round(a.y + ((b.y - a.y) * k) / steps),
+        })
+      }
+    }
+    points.push(waypoints[waypoints.length - 1])
+
+    return points.slice(0, names.length).map((pt, i) => {
+      const entry = names[i]
       const [name, extra] = Array.isArray(entry) ? entry : [entry, {}]
-      return at(from.x + step.x * i, from.y + step.y * i, name, extra)
+      return at(pt.x, pt.y, name, extra)
     })
+  }
 
   const P = (x: number, y: number): Vec2 => ({ x, y })
+  const straight = (a: Vec2, b: Vec2) => [a, b]
 
-  // -------------------------------------------------------------------------
-  // Heavy rail — the outer spine, and the express that overtakes on it
-  // -------------------------------------------------------------------------
+  // ===========================================================================
+  // Heavy rail — 240-unit spacing. Fewest stops, greatest reach.
+  // ===========================================================================
 
-  const railStops = run(P(120, 100), P(120, 0), [
-    ['Aldbury Parkway', { badges: ['rail', 'park-ride', 'step-free'] }],
-    'Fenwick',
-    'Hollowmere',
-    ['Norbridge', { badges: ['rail', 'step-free'] }],
-    'Stanmoor',
-    ['Aldbury North', { nameSecondary: 'Gogledd Aldbury', badges: ['rail', 'step-free'] }],
+  const r1 = route(straight(P(840, 60), P(840, 1020)), 240, [
+    ['Aldbury North', { badges: ['rail', 'park-ride', 'step-free'] }],
     'Kestrel Hill',
-    ['Ravensmoor', { badges: ['rail'] }],
-    'Thornleigh',
-    'Whitcombe',
-    ['Eastmarch', { badges: ['rail', 'park-ride'] }],
-  ])
-
-  // -------------------------------------------------------------------------
-  // Metro
-  // -------------------------------------------------------------------------
-
-  const m1 = run(P(120, 460), P(60, 0), [
-    ['Westgate', { badges: ['park-ride'] }],
-    'Alder Row',
-    'Brackenfield',
-    'Fairholme',
-    ['Guild Cross', { badges: ['step-free'] }],
-    'Saltmarket',
-    'Cordwainer Lane',
-    'Lamplight',
-    ['Guild Square', { nameSecondary: 'Sgwâr y Gild', badges: ['step-free'] }],
-    'Exchange',
     ['Aldbury Central', { nameSecondary: 'Canol Aldbury', badges: ['rail', 'step-free', 'bus'] }],
-    'Threadneedle',
-    ['Kings Wharf', { badges: ['ferry'] }],
-    'Tanner Street',
-    'Ironside',
-    'Marsh Lane',
-    ['Eastgate', { badges: ['step-free'] }],
-    'Bellingford',
-    'Crowmere',
-    'Havershall',
-    ['Eastfield', { badges: ['park-ride'] }],
+    'Sallowfield',
+    ['Aldbury South', { badges: ['rail', 'park-ride'] }],
   ])
 
-  const m2 = run(P(720, 100), P(0, 60), [
-    'Aldbury North',
-    'Vestry Green',
-    ['Highgate Bar', { badges: ['step-free'] }],
-    'Pentland',
-    'Cloister Walk',
-    'Rookwood',
-    'Aldbury Central',
-    'Bishopsgate',
-    ['Southwark Row', { badges: ['step-free'] }],
-    'Candlewick',
-    'Sallow Bridge',
-    'Peartree',
-    ['Foundry Fields', { status: 'construction' }],
-    ['Aldbury South', { badges: ['park-ride'], status: 'construction' }],
-  ])
-
-  const m3 = run(P(240, 820), P(60, -60), [
-    ['Millgate', { badges: ['bus'] }],
-    'Lowbank',
-    'Sedgeley',
-    'Carrow',
-    'Netherfold',
-    'Amberley',
-    'Guild Square',
-    'Blackfriars',
-    'Cloister Walk',
-    'Ashcombe',
-    'Templeton',
-    ['Fallowfield', { status: 'planned' }],
-    'Ravensmoor',
-  ])
-
-  // A genuine Y. The trunk runs up the west side; the second branch turns onto the M1
-  // corridor, which is what produces the parallel strokes from Cordwainer Lane west.
-  const m4Trunk = run(P(480, 880), P(0, -60), [
-    'Aldbury Vale',
-    'Dunmore',
-    'Weaver Street',
-    'Hattersley',
-    'Ferngate',
-    'Netherfold',
-    'Ash Hollow',
-    'Cordwainer Lane',
-    ['Cranbourne', { badges: ['step-free'] }],
-  ])
-
-  // -------------------------------------------------------------------------
-  // The ring. Its last stop repeats its first, which is what makes it a ring: no
-  // terminus, and so no route bullet stranded in the middle of the loop.
-  // -------------------------------------------------------------------------
-
-  const ringTop = run(P(360, 220), P(120, 0), [
-    ['Chandlers Gate', { badges: ['step-free'] }],
-    'Pomeroy',
-    'Priory Fields',
-    'Highgate Bar',
-    'Templeton',
-    'Marlowe Street',
-    'Pargeter Hill',
-  ])
-  const ringRight = run(P(1080, 340), P(0, 120), ['Quarrymans', 'Eastgate', 'Bell Yard', 'Wrenbury'])
-  const ringBottom = run(P(960, 700), P(-120, 0), [
-    'Cobbleworth',
-    'Longmarsh',
-    'Sallow Bridge',
-    'Kilnmore',
-    'Hattersley',
-    'Sedgeley',
-  ])
-  const ringLeft = run(P(360, 580), P(0, -120), ['Foundry Row', 'Guild Cross', 'Almsbury'])
-  const ring = [...ringTop, ...ringRight, ...ringBottom, ...ringLeft, ringTop[0]]
-
-  // -------------------------------------------------------------------------
-  // Trams
-  // -------------------------------------------------------------------------
-
-  const t4Main = run(P(240, 820), P(80, 0), [
-    'Millgate',
-    'Bramblewick',
-    'Turnstone',
-    'Dunmore',
-    'Cinderford',
-    'Oakhanger',
-    'Foundry Fields',
-    'Sallow Row',
-    ['Harbour Gate', { badges: ['ferry'] }],
-    'Trencher Lane',
-    'Salthouse',
-    'Windlass',
-    ['Skerry Point', { badges: ['ferry'] }],
-  ])
-  const t4Spur = [
-    byName.get('Harbour Gate')!,
-    ...run(P(880, 740), P(0, -80), ['Copperworks', 'Bell Quay']),
-  ]
-
-  const t5 = run(P(120, 220), P(0, 60), [
-    'Kilnside',
-    'Barrowfield',
-    'Sculthorpe',
-    'Ravenhurst',
-    'Westgate',
-    'Tolliver',
-    ['Wharfedale', { badges: ['ferry'] }],
-    'Fentiman',
-    'Quarry End',
-  ])
-
-  // -------------------------------------------------------------------------
-  // The later lines: a cross-city diagonal, a northern tram and a southern metro
-  // -------------------------------------------------------------------------
-
-  // Runs corner to corner, so it crosses almost everything else on the map. Most of
-  // the bridges you can see at line crossings are this one passing over something.
-  const m5 = run(P(180, 160), P(60, 60), [
-    'Harrowgate',
-    'Ninewells',
-    'Claverton',
-    'Almsbury',
-    'Stonebridge',
-    'Cordwainer Lane',
-    'Amberley',
-    'Fenchurch Row',
-    'Kettleby',
-    'Sallow Bridge',
-    'Verdant Way',
-    'Bowyers Lea',
-  ])
-
-  const t6 = run(P(120, 280), P(120, 0), [
-    'Barrowfield',
-    'Tannery Bank',
-    'Whitmoor',
-    'Corbridge',
-    'Elmswood',
-    'Pentland',
-    'Ashfield Gate',
-    'Sperring',
-    'Nettlebed',
-    'Hoxne',
-  ])
-
-  const m6 = run(P(240, 880), P(120, 0), [
-    'Garrowby',
-    'Sumpter Lane',
-    'Aldbury Vale',
-    'Thistlewood',
-    'Aldbury South',
-    'Ryehill',
-    'Coalgate',
-    'Fenmarsh',
-    'Tidewell',
-    ['Marlbrook', { badges: ['park-ride'] }],
-  ])
-
-  // A second heavy-rail route down the far west, sharing the T5 corridor for most of
-  // its length — the longest parallel bundle on the map.
-  const r3 = run(P(60, 100), P(0, 120), [
-    'Westhaven',
-    'Calder Bank',
-    'Priorswood',
-    'Ulverton',
-    'Dellbridge',
-    'Southmoor',
+  const r3 = route(straight(P(120, 540), P(1560, 540)), 240, [
     ['Aldbury West', { badges: ['rail', 'park-ride'] }],
+    'Marlbrook',
+    'Guild Square',
+    'Aldbury Central',
+    'Threadneedle',
+    'Havershall',
+    ['Eastmarch', { badges: ['rail', 'park-ride', 'step-free'] }],
   ])
 
-  // The southern orbital: heavy rail skirting the city, and the two feeders that
-  // reach it. Nothing here touches the centre, which is what an orbital is for.
-  const r4 = run(P(180, 940), P(120, 0), [
-    ['Aldbury Parkway South', { badges: ['rail', 'park-ride'] }],
+  // An orbital skirts the city without entering it. That is what makes it an orbital.
+  const r4 = route(straight(P(120, 1020), P(1560, 1020)), 240, [
     'Willowdene',
-    'Scarcroft',
     'Hedgerley',
     'Lambourne',
-    ['Aldbury Junction', { badges: ['rail', 'step-free'] }],
+    'Aldbury South',
     'Pickering',
-    'Sowerby',
     'Marchwood',
-    'Greetwell',
     ['Haverside', { badges: ['rail', 'park-ride'] }],
   ])
 
-  const m7 = run(P(900, 160), P(0, 120), [
-    'Fallowfield',
-    'Cardingmill',
-    'Peverel',
-    'Wexcombe',
-    'Ludgershall',
-    'Braybrooke',
-    'Netherwood',
-  ])
+  // ===========================================================================
+  // Metro — 120-170 spacing, straight and direct
+  // ===========================================================================
 
-  const t7 = run(P(1200, 220), P(0, 120), [
-    'Ferrers Green',
-    'Alderholt',
-    'Crowmere',
-    'Stainforth',
-    'Wolvercote',
-    'Skerry Point',
-  ])
-
-  const m8 = run(P(300, 160), P(0, 120), [
+  const m1 = route(straight(P(360, 60), P(1320, 1020)), 170, [
     'Carrickfell',
-    'Bexwell',
-    'Marston Gate',
-    'Ullswater Road',
-    'Pyrton',
-    'Lowbank',
-    'Heathermoor',
+    'Claverton',
+    'Elmswood',
+    'Cordwainer Lane',
+    'Aldbury Central',
+    'Bishopsgate',
+    'Candlewick',
+    'Verdant Way',
+    ['Marlbrook Vale', { badges: ['park-ride'] }],
   ])
 
-  // A funicular. Same mode as the cable car, different character — and it runs on a
-  // timetable rather than continuously, which is what the service label is for.
-  const k2 = [
-    byName.get('Wolvercote')!,
-    ...run(P(1260, 640), P(60, -60), ['Cliff Halt', 'Hanger Top']),
-  ]
+  const m2 = route(straight(P(360, 1020), P(1320, 60)), 170, [
+    ['Garrowby', { badges: ['park-ride'] }],
+    'Lowbank',
+    'Sedgeley',
+    'Amberley',
+    'Aldbury Central',
+    'Kings Wharf',
+    'Ashcombe',
+    'Templeton',
+    ['Ravensmoor', { badges: ['step-free'] }],
+  ])
 
-  // -------------------------------------------------------------------------
-  // Buses — including one that only runs at night
-  // -------------------------------------------------------------------------
+  const m3 = route(straight(P(120, 300), P(1560, 300)), 120, [
+    'Priorswood',
+    'Ulverton',
+    'Chandlers Gate',
+    'Pomeroy',
+    'Elmswood',
+    'Vestry Green',
+    'Kestrel Hill',
+    'Cardingmill',
+    'Ashcombe',
+    'Marlowe Street',
+    'Alderholt',
+    'Ferrers Green',
+    ['Whitcombe', { badges: ['park-ride'] }],
+  ])
+
+  const m5 = route(straight(P(600, 60), P(600, 1020)), 120, [
+    'Harrowgate',
+    'Whitmoor',
+    'Elmswood',
+    'Marston Gate',
+    'Guild Square',
+    'Foundry Row',
+    'Sedgeley',
+    'Kilnmore',
+    ['Thistlewood', { status: 'construction' }],
+  ])
+
+  const m6 = route(straight(P(1080, 60), P(1080, 1020)), 120, [
+    'Thornleigh',
+    'Nettlebed',
+    'Ashcombe',
+    'Peverel',
+    'Threadneedle',
+    'Ludgershall',
+    'Candlewick',
+    'Ryehill',
+    ['Coalgate', { status: 'construction' }],
+  ])
+
+  // The ring. Its last stop repeats its first, which is what makes it a ring: no
+  // terminus, and so no route bullet stranded in the middle of the loop.
+  const ring = route(
+    [P(360, 180), P(1320, 180), P(1320, 900), P(360, 900), P(360, 180)],
+    120,
+    [
+      ['Almsbury', { badges: ['step-free'] }],
+      'Claverton',
+      'Whitmoor',
+      'Corbridge',
+      'Highgate Bar',
+      'Ashfield Gate',
+      'Nettlebed',
+      'Hoxne',
+      'Pargeter Hill',
+      'Quarrymans',
+      'Stainforth',
+      'Bell Yard',
+      'Wrenbury',
+      'Wolvercote',
+      'Tidewell',
+      'Fenmarsh',
+      'Ryehill',
+      'Cobbleworth',
+      'Longmarsh',
+      'Hattersley',
+      'Kilnmore',
+      'Bramblewick',
+      'Turnstone',
+      'Dunmore',
+      'Quarry End',
+      'Fentiman',
+      'Tolliver',
+      'Ravenhurst',
+      'Almsbury',
+    ],
+  )
+
+  // ===========================================================================
+  // Trams — 60-unit spacing. Most stops, inner city only, short routes.
+  // ===========================================================================
+
+  const t1 = route(straight(P(480, 420), P(1200, 420)), 60, [
+    'Barrowfield',
+    'Sculthorpe',
+    'Stonebridge',
+    'Ash Hollow',
+    'Lamplight',
+    'Exchange',
+    'Saltmarket',
+    'Tanner Street',
+    'Ironside',
+    'Marsh Lane',
+    'Bellingford',
+    'Crowmere',
+    'Alderholt Green',
+  ])
+
+  const t2 = route(straight(P(720, 240), P(720, 840)), 60, [
+    'Cloister Walk',
+    'Rookwood',
+    'Blackfriars',
+    'Fenchurch Row',
+    'Cranbourne',
+    'Aldbury Guildhall',
+    'Southwark Row',
+    'Kettleby',
+    'Peartree',
+    'Oakhanger',
+    'Sallow Row',
+  ])
+
+  const t3 = route(straight(P(960, 240), P(960, 840)), 60, [
+    'Pentland',
+    'Ashfield Row',
+    'Marlowe Gate',
+    'Fallowfield',
+    'Eastgate',
+    'Isle of Gull',
+    'Bell Quay',
+    'Copperworks',
+    'Salthouse',
+    'Windlass',
+    'Trencher Lane',
+  ])
+
+  const t4 = route(straight(P(480, 660), P(1200, 660)), 60, [
+    'Barrowfield South',
+    'Priory Fields',
+    'Carrow',
+    'Ferngate',
+    'Foundry Fields',
+    'Bowyers Lea',
+    'Harbour Gate',
+    'Netherwood',
+    'Greetwell',
+    'Sowerby',
+    'Scarcroft',
+    'Willowdene Green',
+    'Alderholt South',
+  ])
+
+  // Two more trams sharing the main axes with heavy rail, which is what gives the
+  // central corridors their parallel bundles.
+  const t5 = route(straight(P(480, 540), P(1200, 540)), 60, [
+    'Westbourne',
+    'Tolliver Row',
+    'Guild Square',
+    'Lamplight Green',
+    'Cheapside',
+    'Cornmarket',
+    'Aldbury Central',
+    'Threadneedle Row',
+    'Bell Street',
+    'Marsh Gate',
+    'Threadneedle',
+    'Crowmere Row',
+    'Alderholt West',
+  ])
+
+  const t6 = route(straight(P(840, 240), P(840, 840)), 60, [
+    'Vestry Row',
+    'Kestrel Hill',
+    'Cloister Green',
+    'Blackfriars Row',
+    'Guildhall Yard',
+    'Aldbury Central',
+    'Bishopsgate Row',
+    'Candle Street',
+    'Peartree Row',
+    'Sallowfield',
+    'Longmarsh Quay',
+  ])
+
+  // ===========================================================================
+  // Buses — 60-unit spacing, and the only routes here that wander. They go where the
+  // rapid modes do not, which is why they bend and a metro does not.
+  // ===========================================================================
+
+  const b1 = route(
+    [P(240, 420), P(240, 780), P(600, 780), P(600, 960), P(960, 960)],
+    60,
+    [
+      'Calder Bank',
+      'Dellbridge',
+      'Southmoor',
+      'Ninewells',
+      'Pyrton',
+      'Heathermoor',
+      'Sumpter Lane',
+      'Garrowby Road',
+      'Aldbury Vale',
+      'Thistlewood Green',
+      'Ryehill Cross',
+      'Coalgate Road',
+      'Fenmarsh Lane',
+      'Braybrooke Park',
+      'Dockside Road',
+    ],
+  )
+
+  const b2 = route(
+    [P(1440, 180), P(1440, 480), P(1200, 480), P(1200, 780), P(1440, 780)],
+    60,
+    [
+      'Beacon Halt',
+      'Cliff Halt',
+      'Hanger Top',
+      'Airport Approach',
+      'Alderholt East',
+      'Stainforth Road',
+      'Wolvercote Hill',
+      'Tidewell Green',
+      'Marchwood Road',
+      'Haverside Lane',
+      'Greetwell East',
+      'Sowerby Hill',
+      'Eastmarch Road',
+      'Havershall Green',
+      'Crowmere Road',
+      'Pickering Road',
+    ],
+  )
+
+  const b3 = route(
+    [P(180, 120), P(180, 420), P(420, 420), P(420, 120), P(660, 120)],
+    60,
+    [
+      'Hollowmere',
+      'Fenwick Road',
+      'Stanmoor',
+      'Norbridge Lane',
+      'Calder Row',
+      'Priorswood Green',
+      'Ulverton Hill',
+      'Carrickfell Road',
+      'Bexwell Green',
+      'Harrowgate Road',
+      'Whitmoor Lane',
+      'Claverton Road',
+      'Almsbury Green',
+      'Pomeroy Road',
+      'Corbridge Lane',
+      'Elmswood Green',
+    ],
+  )
+
+  const n9 = route(
+    [P(360, 540), P(840, 540), P(840, 780), P(1200, 780)],
+    120,
+    [
+      'Marlbrook',
+      'Ulverton Road',
+      'Guild Square',
+      'Aldbury Central',
+      'Southwark Row',
+      'Kettleby',
+      'Sallow Row',
+      'Harbour Gate',
+      'Netherwood',
+    ],
+  )
+
+  // ===========================================================================
+  // Ferry, cable and the airport shuttle
+  // ===========================================================================
 
   const byNames = (...names: string[]): StationId[] => names.map((n) => byName.get(n)!)
 
-  const b12 = byNames(
-    'Kilnside', 'Pomeroy', 'Chandlers Gate', 'Guild Cross',
-    'Guild Square', 'Aldbury Central', 'Bishopsgate', 'Cobbleworth', 'Longmarsh',
-  )
-  const b20 = byNames('Aldbury Central', 'Exchange', 'Kings Wharf', 'Eastgate', 'Bell Yard', 'Harbour Gate')
+  const f1 = byNames('Harbour Gate', 'Bell Quay', 'Isle of Gull', 'Kings Wharf')
+  const f2 = byNames('Kings Wharf', 'Sallow Row')
 
-  // -------------------------------------------------------------------------
-  // Ferries along the estuary
-  // -------------------------------------------------------------------------
-
-  const f1 = byNames('Wharfedale', 'Kings Wharf', 'Harbour Gate', 'Skerry Point')
-  const f2 = [byName.get('Kings Wharf')!, at(960, 580, 'Isle of Gull', { badges: ['ferry'] })]
-
-  // -------------------------------------------------------------------------
-  // Cable car up the escarpment, and a one-way airport shuttle loop
-  // -------------------------------------------------------------------------
-
-  const k1 = [
-    byName.get('Pargeter Hill')!,
-    ...run(P(1200, 160), P(60, -30), ['Beacon Halt', 'Aldbury Beacon']),
-  ]
+  const k1 = byNames('Pargeter Hill', 'Beacon Halt', 'Cliff Halt')
 
   const airportLoop = [
-    byName.get('Eastfield')!,
-    at(1260, 400, 'Airport Approach'),
-    at(1260, 340, 'Aldbury Airport', {
+    byName.get('Whitcombe')!,
+    at(1560, 240, 'Aldbury Airport', {
       badges: ['airport', 'rail', 'step-free'],
       nameSecondary: 'Maes Awyr',
     }),
-    at(1320, 400, 'Airport Cargo'),
-    byName.get('Eastfield')!, // closes the loop, and it only runs one way round
+    at(1560, 360, 'Airport Cargo'),
+    byName.get('Whitcombe')!,
   ]
 
   const id = (name: string): StationId => byName.get(name)!
   const branch = (stops: StationId[], extra: Partial<Branch> = {}): Branch =>
     makeBranch(newBranchId(), stops, extra)
-
-  const line = (name: string, mode: string, color: string, branches: Branch[]): Line => ({
+  const mkLine = (name: string, mode: string, color: string, branches: Branch[]): Line => ({
     id: newLineId(),
     name,
     mode,
@@ -436,105 +505,74 @@ export function createSampleProject(): Project {
   })
 
   const lines: Line[] = [
-    // Heavy rail first, so it sits under the metro where they share a corridor.
-    line('R1', 'rail', '#1B4F9C', [branch(railStops, { name: 'all stations' })]),
+    mkLine('R1', 'rail', '#1277BA', [branch(r1, { name: 'all stations' })]),
 
-    // The express. It calls at five of R1's stations and RUNS THROUGH the rest, which
-    // is why it follows the same alignment instead of cutting a straight line across
-    // the map. You cannot board it where it does not stop.
-    line('R2', 'rail', '#A8143C', [
-      branch(
-        [
-          id('Aldbury Parkway'),
-          id('Norbridge'),
-          id('Aldbury North'),
-          id('Ravensmoor'),
-          id('Eastmarch'),
-        ],
-        {
-          name: 'express',
-          service: 'Peak only',
-          passes: [
-            id('Fenwick'),
-            id('Hollowmere'),
-            id('Stanmoor'),
-            id('Kestrel Hill'),
-            id('Thornleigh'),
-            id('Whitcombe'),
-          ],
-        },
-      ),
+    // The express. It calls at three of R1's five stations and RUNS THROUGH the other
+    // two, so it follows the same alignment and is offset alongside the local rather
+    // than drawn over the top of it. You cannot board it where it does not stop.
+    mkLine('R2', 'rail', '#C9342B', [
+      branch(byNames('Aldbury North', 'Aldbury Central', 'Aldbury South'), {
+        name: 'express',
+        service: 'Peak only',
+        passes: byNames('Kestrel Hill', 'Sallowfield'),
+      }),
     ]),
 
-    line('M1', 'metro', '#C9342B', [branch(m1)]),
-    line('M2', 'metro', '#00639B', [branch(m2)]),
-    line('M3', 'metro', '#00784F', [branch(m3)]),
+    mkLine('R3', 'rail', '#1E2866', [branch(r3, { name: 'west coast' })]),
+    mkLine('R4', 'rail', '#1E663B', [branch(r4, { name: 'southern orbital' })]),
 
-    // A Y, with the western branch given its own colour the way the Northern line's
-    // are distinguished on some maps.
-    line('M4', 'metro', '#6B4796', [
-      branch(m4Trunk, { name: 'to Cranbourne' }),
-      branch(
-        byNames('Cordwainer Lane', 'Saltmarket', 'Guild Cross', 'Fairholme', 'Brackenfield', 'Alder Row', 'Westgate'),
-        { name: 'to Westgate', color: '#8C4A00' },
-      ),
+    mkLine('M1', 'metro', '#990F0F', [branch(m1)]),
+    mkLine('M2', 'metro', '#2F459D', [branch(m2)]),
+    mkLine('M3', 'metro', '#0C790C', [branch(m3)]),
+
+    // A genuine Y: the trunk runs north–south, then a second branch turns west.
+    mkLine('M5', 'metro', '#8212BA', [
+      branch(m5, { name: 'to Thistlewood' }),
+      branch(byNames('Guild Square', 'Marlbrook', 'Aldbury West'), {
+        name: 'to Aldbury West',
+        color: '#99460F',
+      }),
     ]),
 
-    // The ring.
-    line('C1', 'metro', '#D4A017', [branch(ring, { name: 'circle' })]),
+    mkLine('M6', 'metro', '#BA1298', [branch(m6)]),
+    mkLine('C1', 'metro', '#827527', [branch(ring, { name: 'circle' })]),
 
-    line('T4', 'tram', '#2E7D6B', [
-      branch(t4Main, { name: 'Skerry Point' }),
-      branch(t4Spur, { name: 'Longmarsh' }),
-    ]),
-    line('T5', 'tram', '#4B6A16', [branch(t5)]),
-    line('T6', 'tram', '#8C4A00', [branch(t6)]),
+    mkLine('T1', 'tram', '#278263', [branch(t1)]),
+    mkLine('T2', 'tram', '#458227', [branch(t2)]),
+    mkLine('T3', 'tram', '#15576F', [branch(t3)]),
+    mkLine('T4', 'tram', '#664E1E', [branch(t4)]),
+    mkLine('T5', 'tram', '#0C790C', [branch(t5)]),
+    mkLine('T6', 'tram', '#8212BA', [branch(t6)]),
 
-    line('M5', 'metro', '#A8143C', [branch(m5)]),
-    line('M6', 'metro', '#5C5F66', [branch(m6)]),
+    mkLine('B1', 'bus', '#962F9D', [branch(b1)]),
+    mkLine('B2', 'bus', '#661E1E', [branch(b2)]),
+    mkLine('B3', 'bus', '#827527', [branch(b3)]),
+    mkLine('N9', 'bus', '#5C5F66', [branch(n9, { service: 'Nights only' })]),
 
-    line('R3', 'rail', '#12557A', [branch(r3, { name: 'west coast' })]),
-    line('R4', 'rail', '#4B6A16', [branch(r4, { name: 'southern orbital' })]),
+    mkLine('F1', 'ferry', '#1212BA', [branch(f1)]),
+    mkLine('F2', 'ferry', '#3D0F99', [branch(f2)]),
 
-    line('M7', 'metro', '#B3187C', [branch(m7)]),
-    line('T7', 'tram', '#0D7C93', [branch(t7)]),
+    mkLine('K1', 'cable', '#990F62', [branch(k1, { name: 'funicular', service: 'Apr–Oct' })]),
 
-    line('B12', 'bus', '#B45A0E', [branch(b12)]),
-    line('N20', 'bus', '#5C5F66', [branch(b20, { service: 'Nights only' })]),
-
-    line('F1', 'ferry', '#0D7C93', [branch(f1)]),
-    line('F2', 'ferry', '#12557A', [branch(f2)]),
-
-    line('M8', 'metro', '#2E7D6B', [branch(m8)]),
-
-    line('K1', 'cable', '#7A2E8E', [branch(k1)]),
-    line('K2', 'cable', '#D4A017', [branch(k2, { name: 'funicular', service: 'Apr–Oct' })]),
-
-    // One way round only: the shuttle leaves Eastfield, calls at the terminal and the
-    // cargo gate, and comes back to Eastfield. Ask the planner for the reverse and it
-    // sends you round the loop rather than back up the way you came.
-    line('A1', 'bus', '#B3187C', [
+    // One way round only: out to the terminal, past the cargo gate, back. Ask the
+    // planner for the reverse and it sends you round rather than back the way you came.
+    mkLine('A1', 'bus', '#632782', [
       branch(airportLoop, { name: 'airport loop', direction: 'forward', service: 'Every 10 min' }),
     ]),
   ]
 
-  // -------------------------------------------------------------------------
+  // ===========================================================================
   // Terrain
-  // -------------------------------------------------------------------------
+  // ===========================================================================
 
   const terrain: Terrain[] = [
-    // The estuary: a wandering trace over the map, simplified to four strokes for the
-    // diagram — the move that separates a transit map from a drawing on a screenshot.
     makeTerrain(newTerrainId(), 'waterway', {
       name: 'River Ald',
       geo: [
-        { x: 40, y: 640 }, { x: 180, y: 672 }, { x: 320, y: 628 }, { x: 470, y: 686 },
-        { x: 620, y: 640 }, { x: 780, y: 700 }, { x: 940, y: 648 }, { x: 1120, y: 706 },
-        { x: 1340, y: 660 },
+        { x: 40, y: 760 }, { x: 240, y: 792 }, { x: 460, y: 742 }, { x: 700, y: 800 },
+        { x: 940, y: 748 }, { x: 1200, y: 806 }, { x: 1600, y: 760 },
       ],
-      schematic: [
-        { x: 40, y: 620 }, { x: 520, y: 620 }, { x: 640, y: 740 }, { x: 1360, y: 740 },
-      ],
+      schematic: [{ x: 40, y: 750 }, { x: 660, y: 750 }, { x: 780, y: 870 }, { x: 1620, y: 870 }],
     }),
 
     // A lake with an island in it — the case a single ring cannot express.
@@ -542,12 +580,14 @@ export function createSampleProject(): Project {
       name: 'Gull Water',
       closed: true,
       fill: 'solid',
-      geo: [{ x: 880, y: 520 }, { x: 1060, y: 520 }, { x: 1060, y: 640 }, { x: 880, y: 640 }],
-      schematic: [{ x: 880, y: 520 }, { x: 1060, y: 520 }, { x: 1060, y: 640 }, { x: 880, y: 640 }],
+      geo: [{ x: 900, y: 600 }, { x: 1080, y: 600 }, { x: 1080, y: 720 }, { x: 900, y: 720 }],
+      schematic: [{ x: 900, y: 600 }, { x: 1080, y: 600 }, { x: 1080, y: 720 }, { x: 900, y: 720 }],
       holes: [
         {
-          geo: [{ x: 930, y: 556 }, { x: 1000, y: 556 }, { x: 1000, y: 606 }, { x: 930, y: 606 }],
-          schematic: [{ x: 930, y: 556 }, { x: 1000, y: 556 }, { x: 1000, y: 606 }, { x: 930, y: 606 }],
+          geo: [{ x: 948, y: 636 }, { x: 1020, y: 636 }, { x: 1020, y: 684 }, { x: 948, y: 684 }],
+          schematic: [
+            { x: 948, y: 636 }, { x: 1020, y: 636 }, { x: 1020, y: 684 }, { x: 948, y: 684 },
+          ],
         },
       ],
     }),
@@ -556,82 +596,87 @@ export function createSampleProject(): Project {
       name: 'Pentland Common',
       closed: true,
       fill: 'hatch',
-      geo: [{ x: 540, y: 220 }, { x: 700, y: 220 }, { x: 700, y: 360 }, { x: 540, y: 360 }],
-      schematic: [{ x: 540, y: 250 }, { x: 690, y: 250 }, { x: 690, y: 370 }, { x: 540, y: 370 }],
+      geo: [{ x: 620, y: 320 }, { x: 800, y: 320 }, { x: 800, y: 460 }, { x: 620, y: 460 }],
+      schematic: [{ x: 630, y: 330 }, { x: 800, y: 330 }, { x: 800, y: 470 }, { x: 630, y: 470 }],
     }),
     makeTerrain(newTerrainId(), 'green', {
       name: 'Beacon Down',
       closed: true,
       fill: 'hatch',
-      geo: [{ x: 1180, y: 60 }, { x: 1360, y: 60 }, { x: 1360, y: 200 }, { x: 1180, y: 200 }],
-      schematic: [{ x: 1180, y: 60 }, { x: 1360, y: 60 }, { x: 1360, y: 200 }, { x: 1180, y: 200 }],
+      geo: [{ x: 1380, y: 80 }, { x: 1620, y: 80 }, { x: 1620, y: 260 }, { x: 1380, y: 260 }],
+      schematic: [{ x: 1380, y: 80 }, { x: 1620, y: 80 }, { x: 1620, y: 260 }, { x: 1380, y: 260 }],
     }),
 
     makeTerrain(newTerrainId(), 'builtup', {
       name: 'Dockside',
       closed: true,
       fill: 'stipple',
-      geo: [{ x: 760, y: 760 }, { x: 1120, y: 760 }, { x: 1120, y: 880 }, { x: 760, y: 880 }],
-      schematic: [{ x: 760, y: 770 }, { x: 1120, y: 770 }, { x: 1120, y: 880 }, { x: 760, y: 880 }],
+      geo: [{ x: 840, y: 880 }, { x: 1260, y: 880 }, { x: 1260, y: 980 }, { x: 840, y: 980 }],
+      schematic: [{ x: 840, y: 890 }, { x: 1260, y: 890 }, { x: 1260, y: 980 }, { x: 840, y: 980 }],
     }),
 
     makeTerrain(newTerrainId(), 'boundary', {
       name: 'City limit',
       closed: true,
       fill: 'none',
-      geo: [{ x: 20, y: 40 }, { x: 1400, y: 40 }, { x: 1400, y: 1000 }, { x: 20, y: 1000 }],
-      schematic: [{ x: 20, y: 40 }, { x: 1400, y: 40 }, { x: 1400, y: 1000 }, { x: 20, y: 1000 }],
+      geo: [{ x: 60, y: 20 }, { x: 1640, y: 20 }, { x: 1640, y: 1080 }, { x: 60, y: 1080 }],
+      schematic: [{ x: 60, y: 20 }, { x: 1640, y: 20 }, { x: 1640, y: 1080 }, { x: 60, y: 1080 }],
     }),
 
-    // Fare zones, drawn behind everything. Station `zone` values match these names.
     makeTerrain(newTerrainId(), 'zone', {
       name: 'Zone 1',
       zone: '1',
       closed: true,
       fill: 'solid',
-      geo: [{ x: 380, y: 210 }, { x: 1060, y: 210 }, { x: 1060, y: 710 }, { x: 380, y: 710 }],
-      schematic: [{ x: 380, y: 210 }, { x: 1060, y: 210 }, { x: 1060, y: 710 }, { x: 380, y: 710 }],
+      geo: [{ x: 500, y: 290 }, { x: 1180, y: 290 }, { x: 1180, y: 790 }, { x: 500, y: 790 }],
+      schematic: [{ x: 500, y: 290 }, { x: 1180, y: 290 }, { x: 1180, y: 790 }, { x: 500, y: 790 }],
     }),
     makeTerrain(newTerrainId(), 'zone', {
       name: 'Zone 2',
       zone: '2',
       closed: true,
       fill: 'none',
-      geo: [{ x: 90, y: 130 }, { x: 1350, y: 130 }, { x: 1350, y: 910 }, { x: 90, y: 910 }],
-      schematic: [{ x: 90, y: 130 }, { x: 1350, y: 130 }, { x: 1350, y: 910 }, { x: 90, y: 910 }],
+      geo: [{ x: 330, y: 150 }, { x: 1350, y: 150 }, { x: 1350, y: 930 }, { x: 330, y: 930 }],
+      schematic: [{ x: 330, y: 150 }, { x: 1350, y: 150 }, { x: 1350, y: 930 }, { x: 330, y: 930 }],
     }),
 
-    // Free annotations, each styled differently — the thing a single hardcoded text
-    // size could never do.
     makeTerrain(newTerrainId(), 'label', {
       name: 'RIVER ALD',
-      geo: [{ x: 240, y: 612 }],
-      schematic: [{ x: 250, y: 606 }],
-      text: { size: 19, italic: true, color: '#3E7E96', letterSpacing: 3, opacity: 0.75, align: 'start' },
+      geo: [{ x: 300, y: 736 }],
+      schematic: [{ x: 300, y: 738 }],
+      text: {
+        size: 20,
+        italic: true,
+        color: '#3E7E96',
+        letterSpacing: 3,
+        opacity: 0.75,
+        align: 'start',
+      },
     }),
     makeTerrain(newTerrainId(), 'label', {
       name: 'BEACON DOWN',
-      geo: [{ x: 1270, y: 132 }],
-      schematic: [{ x: 1270, y: 132 }],
-      text: { size: 13, weight: 700, color: '#4B6A16', opacity: 0.7, letterSpacing: 2 },
+      geo: [{ x: 1500, y: 172 }],
+      schematic: [{ x: 1500, y: 172 }],
+      text: { size: 14, weight: 700, color: '#4B6A16', opacity: 0.7, letterSpacing: 2 },
     }),
     makeTerrain(newTerrainId(), 'label', {
       name: 'DOCKSIDE',
-      geo: [{ x: 940, y: 828 }],
-      schematic: [{ x: 940, y: 834 }],
-      text: { size: 15, weight: 600, opacity: 0.45, letterSpacing: 4 },
+      geo: [{ x: 1050, y: 946 }],
+      schematic: [{ x: 1050, y: 950 }],
+      text: { size: 16, weight: 600, opacity: 0.45, letterSpacing: 4 },
     }),
     makeTerrain(newTerrainId(), 'label', {
       name: 'to the coast →',
-      geo: [{ x: 1300, y: 706 }],
-      schematic: [{ x: 1300, y: 782 }],
-      text: { size: 12, italic: true, opacity: 0.6, align: 'end' },
+      geo: [{ x: 1600, y: 806 }],
+      schematic: [{ x: 1600, y: 920 }],
+      text: { size: 13, italic: true, opacity: 0.6, align: 'end' },
     }),
   ]
 
-  // -------------------------------------------------------------------------
-  // Furniture
-  // -------------------------------------------------------------------------
+  // ===========================================================================
+  // Furniture, in the margin. A legend dropped in the middle of the map covers the
+  // very thing it is explaining.
+  // ===========================================================================
 
   const place = (what: Placement['what'], p: Vec2, label?: string): Placement => ({
     id: newPlacementId(),
@@ -646,29 +691,25 @@ export function createSampleProject(): Project {
     label,
   })
 
-  // Furniture goes in the margin, outside everything the network occupies. A legend
-  // dropped in the middle of the map covers the very thing it is explaining.
   const placements: Placement[] = [
-    place({ kind: 'legend' }, { x: 2320, y: 760 }, 'Lines'),
-    place({ kind: 'titleBlock' }, { x: 420, y: 60 }, 'Aldbury'),
-    place({ kind: 'northArrow' }, { x: 2320, y: 140 }),
-    place({ kind: 'scaleBar' }, { x: 2320, y: 260 }, '2 km'),
+    place({ kind: 'legend' }, { x: 2600, y: 700 }, 'Lines'),
+    place({ kind: 'titleBlock' }, { x: 400, y: 40 }, 'Aldbury'),
+    place({ kind: 'northArrow' }, { x: 2600, y: 120 }),
+    place({ kind: 'scaleBar' }, { x: 2600, y: 250 }, '2 km'),
   ]
 
-  // Out-of-station interchanges: places where the map has to say "leave and walk",
-  // which no amount of drawing two lines through one dot can express.
+  // Places where the map has to say "leave and walk", which no amount of drawing two
+  // lines through one dot can express.
   const transfers = [
-    { a: id('Kings Wharf'), b: id('Wexcombe'), note: '5 min walk' },
-    { a: id('Guild Cross'), b: id('Chandlers Gate'), note: '4 min walk' },
-    { a: id('Peartree'), b: id('Oakhanger'), note: '3 min walk' },
+    { a: id('Exchange'), b: id('Aldbury Guildhall'), note: '4 min walk' },
+    { a: id('Kings Wharf'), b: id('Eastgate'), note: '5 min walk' },
+    { a: id('Guild Square'), b: id('Foundry Row'), note: '3 min walk' },
   ].map((t) => ({ id: newTransferId(), ...t, hidden: false }))
 
-  // Everything above is laid out on a 60-unit grid, which keeps the coordinates
-  // readable and the intersections exact. It is then scaled up as a whole.
-  //
-  // The reason is label collisions: type size is fixed in map units, so spreading the
-  // stations apart makes every name relatively smaller and gives the placement engine
-  // room to work. At the authoring grid the centre of the city was unreadable.
+  // Authored on a 60-unit grid, which keeps the coordinates readable and the
+  // intersections exact, then scaled up as a whole: type size is fixed in map units, so
+  // spreading the stations apart makes every name relatively smaller and gives the
+  // label placement engine room to work.
   const SPREAD = 1.5
   const grow = (v: Vec2): Vec2 => ({ x: Math.round(v.x * SPREAD), y: Math.round(v.y * SPREAD) })
 

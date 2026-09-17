@@ -1217,7 +1217,7 @@ check('the example network is internally sound', () => {
 
   expect(dupes, [], 'two stations sharing a name are two places with one identity: ')
   expect(net.orphans.size, 0, 'every stop in the example is on a line: ')
-  assert(p.stations.length > 140, 'the example is a city, not a sketch')
+  assert(p.stations.length > 150, 'the example is a city, not a sketch')
   assert(
     validateProject(p, net).every((i) => i.severity === 'info'),
     'the example must not ship with anything the checker flags',
@@ -1243,6 +1243,100 @@ check('the example exercises the features it claims to', () => {
   assert(p.terrain.some((t) => t.text), 'styled annotation')
   assert(p.placements.length >= 4, 'map furniture')
   assert(p.transfers.length > 0, 'an out-of-station link')
+})
+
+check('an express shares the corridor it runs along with the local', () => {
+  const { net, a, b, local, exp } = expressFixture()
+  // The segment A-B belongs to the local's calling pattern and to the express's
+  // physical run. Both lines must appear in it, or neither knows to step aside.
+  const key = segmentKey(a.id, b.id)
+  const users = net.corridors.get(key) ?? []
+  assert(users.includes(local.id), 'the local runs A-B')
+  assert(users.includes(exp.id), 'so does the express, even though it does not stop at B')
+})
+
+check('an express is drawn beside the local, not on top of it', () => {
+  const { p, net, local, exp } = expressFixture()
+  const lg = branchGeometry(p, net, local, local.branches[0], 'schematic')!
+  const eg = branchGeometry(p, net, exp, exp.branches[0], 'schematic')!
+  const apart = offsetPolyline(lg.points, lg.offsets)
+  const bpart = offsetPolyline(eg.points, eg.offsets)
+  // Compare where each line actually sits at the shared middle of the run.
+  const near = (pts: typeof apart, x: number) =>
+    pts.reduce((best, q) => (Math.abs(q.x - x) < Math.abs(best.x - x) ? q : best), pts[0])
+  const gap = Math.abs(near(apart, 150).y - near(bpart, 150).y)
+  assert(gap > 1, `express and local must not coincide -- they are ${gap.toFixed(2)} apart`)
+})
+
+check('a passed station is a neighbour of what the line runs between', () => {
+  const { net, a, b } = expressFixture()
+  assert(!!net.neighbours.get(a.id)?.has(b.id), 'the express physically reaches B from A')
+})
+
+check('the example gets its stop spacing the right way round', () => {
+  const p = createSampleProject()
+  const where = new Map(p.stations.map((s) => [s.id, s.schematic]))
+
+  const spacing = (mode: string) => {
+    const gaps: number[] = []
+    for (const l of p.lines.filter((x) => x.mode === mode)) {
+      for (const b of l.branches) {
+        for (let i = 0; i < b.stops.length - 1; i++) {
+          const a = where.get(b.stops[i])!
+          const c = where.get(b.stops[i + 1])!
+          const d = Math.hypot(c.x - a.x, c.y - a.y)
+          if (d > 0) gaps.push(d)
+        }
+      }
+    }
+    return gaps.reduce((x, y) => x + y, 0) / gaps.length
+  }
+  const stops = (mode: string) => {
+    const counts = p.lines
+      .filter((x) => x.mode === mode)
+      .flatMap((l) => l.branches.map((b) => b.stops.length))
+    return counts.reduce((x, y) => x + y, 0) / counts.length
+  }
+
+  // This is the thing an invented network gets wrong first, and it is why a map reads
+  // as a real system or as a drawing: a train does not stop every 500 metres and a tram
+  // does not run two kilometres between stops.
+  assert(spacing('rail') > spacing('metro') * 1.5, 'rail must be spaced far wider than metro')
+  assert(spacing('metro') > spacing('tram') * 1.5, 'metro must be spaced far wider than tram')
+  assert(stops('tram') > stops('rail') * 1.5, 'a tram route carries far more stops than a rail one')
+})
+
+check('only the buses wander', () => {
+  const p = createSampleProject()
+  const where = new Map(p.stations.map((s) => [s.id, s.schematic]))
+
+  // How far a route deviates from the straight line between its two ends. A rapid
+  // transit line is near zero; a bus route exists precisely because it is not.
+  const wander = (l: (typeof p.lines)[number]) => {
+    const b = l.branches[0]
+    const pts = b.stops.map((id) => where.get(id)!)
+    if (pts.length < 3) return 0
+    const a = pts[0]
+    const z = pts[pts.length - 1]
+    const len = Math.hypot(z.x - a.x, z.y - a.y)
+    if (len < 1) return 0
+    let worst = 0
+    for (const q of pts) {
+      const t = ((q.x - a.x) * (z.x - a.x) + (q.y - a.y) * (z.y - a.y)) / (len * len)
+      const px = a.x + (z.x - a.x) * t
+      const py = a.y + (z.y - a.y) * t
+      worst = Math.max(worst, Math.hypot(q.x - px, q.y - py))
+    }
+    return worst / len
+  }
+
+  const straightest = (mode: string) =>
+    Math.max(...p.lines.filter((l) => l.mode === mode && l.branches[0].stops.length > 2).map(wander))
+  const buses = p.lines.filter((l) => l.mode === 'bus' && l.name !== 'A1')
+
+  assert(straightest('metro') < 0.05, 'a metro line runs straight')
+  assert(straightest('rail') < 0.05, 'so does heavy rail')
+  assert(buses.some((l) => wander(l) > 0.15), 'at least one bus route genuinely wanders')
 })
 
 // ---------------------------------------------------------------------------

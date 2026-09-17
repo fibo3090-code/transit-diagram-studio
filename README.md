@@ -13,7 +13,7 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 87 domain checks (pure logic, no browser) |
+| `npm test` | 92 domain checks (pure logic, no browser) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
 
@@ -22,9 +22,16 @@ The build is entirely static. `dist/` can be opened from disk or dropped on any 
 ## Start here
 
 Open the **example map** from the front page before anything else. It is a finished
-city — 159 stops on 24 lines across all six modes, with a ring, an express, a one-way
-loop and fifty interchanges — and it is the quickest way to see what the tool produces
-before facing a blank canvas. Every feature described below appears somewhere in it.
+city — 156 stops on 24 lines across all six modes, with a ring, an express, a one-way
+loop and fifty-six interchanges — and it is the quickest way to see what the tool
+produces before facing a blank canvas. Every feature described below appears somewhere
+in it.
+
+It is also built to the spacing a real network has, because that is what makes a map
+read as a system rather than a drawing: heavy rail stops roughly every 2 km and reaches
+the edges of the map, metro every kilometre and runs straight through the middle, trams
+every 500 m over short inner-city routes, and the buses are the only lines that wander —
+they exist to reach what the rapid modes miss.
 
 A new map opens with two clear ways to begin, and a coach in the corner names the single
 next useful step until you dismiss it.
