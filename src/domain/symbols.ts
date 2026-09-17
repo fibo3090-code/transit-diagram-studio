@@ -200,17 +200,46 @@ function serviceMarks(
   network: Network,
   station: Station,
   space: Space,
-): { marks: { at: Vec2; color: string }[]; passing: number } {
+): {
+  marks: { at: Vec2; color: string }[]
+  passing: number
+  /** Where the tie has to reach to touch every calling service. */
+  reach: { from: Vec2; to: Vec2 } | null
+} {
   const calling = new Set(network.linesAtStation.get(station.id) ?? [])
   const neighbours = [...(network.neighbours.get(station.id) ?? [])]
 
   const placed = new Map<LineId, Vec2>()
   const runsPast = new Set<LineId>()
 
-  for (const n of neighbours) {
+  // Marks are only laid out along corridors that actually carry something running past.
+  //
+  // A service arriving on a corridor where everything stops has no need of its own dot,
+  // and giving it one is actively harmful: its slot is measured from a different axis,
+  // so the two marks land a few units apart and overlap. Those services are covered by
+  // the tie instead, which is extended to reach the middle where their stroke runs.
+  // A line can reach a station on two different corridors and sit at a different
+  // offset in each — wider where more lines run alongside. Whichever is visited first
+  // used to win, and "first" depended on generated ids, so the same map drew its marks
+  // in different places on different loads.
+  //
+  // Take the busiest corridor, deterministically. It is the main bundle, the offsets
+  // there are the widest, and the choice no longer varies between runs.
+  const ordered = [...neighbours].sort((a, b) => {
+    const ca = (network.corridors.get(segmentKey(station.id, a)) ?? []).length
+    const cb = (network.corridors.get(segmentKey(station.id, b)) ?? []).length
+    if (ca !== cb) return cb - ca
+    return segmentKey(station.id, a) < segmentKey(station.id, b) ? -1 : 1
+  })
+
+  for (const n of ordered) {
     const key = segmentKey(station.id, n)
     const inCorridor = network.corridors.get(key) ?? []
     if (inCorridor.length === 0) continue
+
+    const skipping = inCorridor.filter((id) => !calling.has(id))
+    for (const id of skipping) runsPast.add(id)
+    if (skipping.length === 0) continue
 
     const target = project.stations.find((s) => s.id === n)
     if (!target || dist(target[space], station[space]) < 1e-6) continue
@@ -222,15 +251,18 @@ function serviceMarks(
     const offsets = network.offsets.get(key)
 
     for (const id of inCorridor) {
-      if (!calling.has(id)) {
-        runsPast.add(id)
-        continue
-      }
-      if (placed.has(id)) continue
+      if (!calling.has(id) || placed.has(id)) continue
       const o = offsets?.get(id) ?? 0
       placed.set(id, mul(across, mirrored ? -o : o))
     }
   }
+
+  // A service that stops here but arrives on a different corridor has no slot in this
+  // bundle, so giving it a dot of its own would put two marks a few units apart and
+  // they would sit on top of each other. It is covered by the tie instead: the tie is
+  // extended to the middle, where that service's stroke runs, so the station visibly
+  // touches it without a second dot competing for the same space.
+  const unplaced = [...calling].filter((id) => !placed.has(id))
 
   const order = project.lines.map((l) => l.id)
   const marks = [...placed.entries()]
@@ -240,7 +272,27 @@ function serviceMarks(
       color: project.lines.find((l) => l.id === id)?.color ?? project.style.foreground,
     }))
 
-  return { marks, passing: runsPast.size }
+  let reach: { from: Vec2; to: Vec2 } | null = null
+  const pts = marks.map((m) => m.at)
+  if (unplaced.length > 0) pts.push({ x: 0, y: 0 })
+  if (pts.length > 1) {
+    let a = pts[0]
+    let b = pts[0]
+    let best = -1
+    for (const q of pts) {
+      for (const w of pts) {
+        const d = dist(q, w)
+        if (d > best) {
+          best = d
+          a = q
+          b = w
+        }
+      }
+    }
+    if (best > 0.5) reach = { from: a, to: b }
+  }
+
+  return { marks, passing: runsPast.size, reach }
 }
 
 export function stationSymbol(
@@ -272,33 +324,17 @@ export function stationSymbol(
   // its dot on the track it actually uses.
   const service = serviceMarks(project, network, station, space)
   if (service.passing > 0 && service.marks.length > 0) {
-    // Tie the marks together along the line through the two furthest apart, so the
-    // group reads as one station rather than a scatter of dots.
-    let tie: { from: Vec2; to: Vec2 } | null = null
-    if (service.marks.length > 1) {
-      let a = service.marks[0].at
-      let b = service.marks[0].at
-      let best = -1
-      for (const m of service.marks) {
-        for (const n of service.marks) {
-          const d = dist(m.at, n.at)
-          if (d > best) {
-            best = d
-            a = m.at
-            b = n.at
-          }
-        }
-      }
-      if (best > 0.5) tie = { from: a, to: b }
-    }
-
+    // Marks are one corridor-spacing apart, so they have to be small enough to sit
+    // beside each other. Half the spacing, less a hair, is the largest that can never
+    // collide however tight the corridor is set.
+    const spacing = project.style.corridorSpacing
     return {
       shape: {
         kind: 'perService',
-        radius: r * 0.78,
+        radius: Math.min(r * 0.78, spacing * 0.46),
         passing: service.passing,
         marks: service.marks,
-        tie,
+        tie: service.reach,
       },
       terminus,
       lineCount: lines.length,

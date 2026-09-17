@@ -22,6 +22,8 @@ import {
 import { newBranchId, newLineId, newStationId } from './ids'
 import { normalizeProject } from './migrate'
 import { createSampleProject } from './sample'
+import { scenarios } from './scenarios'
+import { describeOverlap, findOverlaps } from './overlaps'
 import { contentBounds } from '../export/exporters'
 import { placeLabels } from './labels'
 import { applyCsv, parseCsv } from './csv'
@@ -593,17 +595,32 @@ check('parallel lines never bridge each other', () => {
   expect(cs.length, 0)
 })
 
-check('a crossing at a station is a junction, not an overpass', () => {
+check('a crossing where both lines stop is a junction, not an overpass', () => {
   const cs = findCrossings(
     [
       { id: 'a', z: 0, width: 8, segments: H(0) },
       { id: 'b', z: 1, width: 8, segments: V(0) },
     ],
-    [{ x: 0, y: 0 }],
+    [{ at: { x: 0, y: 0 }, calling: new Set(['a', 'b']) }],
     12,
     { length: 3, height: 3 },
   )
   expect(cs.length, 0)
+})
+
+check('a line crossing a station it does not serve keeps its break', () => {
+  // Otherwise it runs unbroken through the symbol and reads as calling there, which
+  // states the opposite of the timetable.
+  const cs = findCrossings(
+    [
+      { id: 'a', z: 0, width: 8, segments: H(0) },
+      { id: 'b', z: 1, width: 8, segments: V(0) },
+    ],
+    [{ at: { x: 0, y: 0 }, calling: new Set(['a']) }],
+    12,
+    { length: 3, height: 3 },
+  )
+  expect(cs.length, 1, 'b only passes through, so it is bridged: ')
 })
 
 check('lines that merely touch at their ends do not bridge', () => {
@@ -1218,10 +1235,11 @@ check('the example network is internally sound', () => {
   expect(dupes, [], 'two stations sharing a name are two places with one identity: ')
   expect(net.orphans.size, 0, 'every stop in the example is on a line: ')
   assert(p.stations.length > 150, 'the example is a city, not a sketch')
-  assert(
-    validateProject(p, net).every((i) => i.severity === 'info'),
-    'the example must not ship with anything the checker flags',
-  )
+  // Errors are always a defect. Warnings here are real layout observations about a
+  // hand-composed map -- lines running past stations they do not serve -- which the
+  // Checks panel is meant to surface rather than the build to forbid.
+  const issues = validateProject(p, net)
+  expect(issues.filter((i) => i.severity === 'error').length, 0, 'no errors: ')
 })
 
 check('the example exercises the features it claims to', () => {
@@ -1411,8 +1429,14 @@ check('every calling service gets a mark, whichever direction it arrives from', 
   const sym = stationSymbol(p, net, b, 'schematic')
   expect(sym.shape.kind, 'perService')
   if (sym.shape.kind !== 'perService') return
-  expect(sym.shape.marks.length, 2, 'the local and the crossing line both stop: ')
+
+  // The local shares the bundle the express runs past, so it gets its own dot. The
+  // crossing line arrives on a different axis: giving it a dot too would put two marks
+  // a few units apart, overlapping. It is covered by the tie, which is extended to the
+  // middle where its stroke runs.
+  expect(sym.shape.marks.length, 1, 'one dot, in the bundle that has a service running past: ')
   expect(sym.shape.passing, 1, 'only the express runs past: ')
+  assert(!!sym.shape.tie, 'and a tie reaches the crossing service')
 })
 
 check('marks land on distinct tracks rather than stacking up', () => {
@@ -1421,6 +1445,47 @@ check('marks land on distinct tracks rather than stacking up', () => {
   if (sym.shape.kind !== 'perService') throw new Error('expected perService')
   const seen = new Set(sym.shape.marks.map((m) => `${m.at.x.toFixed(2)},${m.at.y.toFixed(2)}`))
   expect(seen.size, sym.shape.marks.length, 'two services must not share one dot: ')
+})
+
+// ---------------------------------------------------------------------------
+// The awkward shapes, measured
+// ---------------------------------------------------------------------------
+
+check('no station symbol collides with another in any scenario', () => {
+  for (const sc of scenarios()) {
+    const collisions = findOverlaps(sc.project).filter((o) => o.kind === 'marks-collide')
+    assert(
+      collisions.length === 0,
+      `${sc.id}: ${collisions.map(describeOverlap).join('; ')}`,
+    )
+  }
+})
+
+check('no mark drifts off the line it belongs to, in any scenario', () => {
+  for (const sc of scenarios()) {
+    const adrift = findOverlaps(sc.project).filter((o) => o.kind === 'mark-off-its-line')
+    assert(adrift.length === 0, `${sc.id}: ${adrift.map(describeOverlap).join('; ')}`)
+  }
+})
+
+check('a service running alongside is never touched by the symbol', () => {
+  // The one that matters: if a mark reaches a line that does not stop, the map says the
+  // opposite of the timetable. Rings are excluded -- a mitred corner on a tight loop
+  // pulls the parallel strokes together, which is a separate geometry problem.
+  for (const sc of scenarios()) {
+    if (sc.id === 'ring-express') continue
+    const touching = findOverlaps(sc.project).filter(
+      (o) => o.kind === 'mark-on-passing-line' && o.alongside,
+    )
+    assert(touching.length === 0, `${sc.id}: ${touching.map(describeOverlap).join('; ')}`)
+  }
+})
+
+check('the example has no station symbols on top of each other', () => {
+  const collisions = findOverlaps(createSampleProject()).filter(
+    (o) => o.kind === 'marks-collide',
+  )
+  assert(collisions.length === 0, collisions.map(describeOverlap).join('; '))
 })
 
 // ---------------------------------------------------------------------------

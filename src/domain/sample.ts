@@ -324,7 +324,7 @@ const LINES: { name: string; mode: string; color: string; branches: BranchSpec[]
     ],
   },
   {
-    name: "B1", mode: "bus", color: "#962F9D",
+    name: "B1", mode: "bus", color: "#0F0FBD",
     branches: [
       { stops: [115, 116, 117, 118, 119, 120, 121, 122, 64, 123, 124, 125, 25, 126, 45] },
     ],

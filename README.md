@@ -13,9 +13,10 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 99 domain checks (pure logic, no browser) |
+| `npm test` | 104 domain checks (pure logic, no browser) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
+| `/lab` | the symbol lab — every awkward shape drawn beside what the overlap checker measured |
 
 The build is entirely static. `dist/` can be opened from disk or dropped on any host.
 

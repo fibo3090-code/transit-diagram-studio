@@ -259,6 +259,26 @@ export function stationMap(project: Project): Map<StationId, Station> {
  * skipping stops on several consecutive segments distributes them correctly instead of
  * piling them all onto the first.
  */
+/**
+ * Is `p` sitting on the segment a-b, rather than merely near it?
+ *
+ * Deliberately strict. A station a few units off an alignment is a separate place that
+ * happens to be close; only one the line genuinely runs over should split its corridor.
+ */
+const ON_SEGMENT_TOLERANCE = 1.5
+
+function onSegment(a: Vec2, b: Vec2, p: Vec2): boolean {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  if (len2 < 1e-9) return false
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2
+  if (t <= 1e-6 || t >= 1 - 1e-6) return false
+  const px = a.x + dx * t
+  const py = a.y + dy * t
+  return Math.hypot(p.x - px, p.y - py) <= ON_SEGMENT_TOLERANCE
+}
+
 function passedAlong(
   a: Vec2,
   b: Vec2,
@@ -301,10 +321,33 @@ export function branchSequence(
   if (stops.length === 0) return { ids, calls }
 
   const served = new Set(stops)
-  const candidates = (branch.passes ?? [])
-    .filter((id) => stations.has(id) && !served.has(id))
-    .map((id) => ({ id, at: stations.get(id)![space] }))
 
+  // Declared pass-throughs, plus any station the branch simply runs over.
+  //
+  // The second half matters as much as the first, and it is easy to miss. A rail line
+  // stopping every two kilometres and a tram stopping every five hundred metres can run
+  // along the same street, and the rail line has ONE segment spanning four of the tram's.
+  // Nothing then matches, neither knows it shares a corridor, both take offset zero, and
+  // the train is drawn straight over the tram and through its stops. Treating a station
+  // the line physically runs over as passed splits that long segment, and the two lines
+  // find each other.
+  const candidates = new Map<StationId, { id: StationId; at: Vec2 }>()
+  for (const id of branch.passes ?? []) {
+    if (stations.has(id) && !served.has(id)) {
+      candidates.set(id, { id, at: stations.get(id)![space] })
+    }
+  }
+  for (let i = 1; i < stops.length; i++) {
+    const a = stations.get(stops[i - 1])?.[space]
+    const b = stations.get(stops[i])?.[space]
+    if (!a || !b) continue
+    for (const [id, st] of stations) {
+      if (served.has(id) || candidates.has(id)) continue
+      if (onSegment(a, b, st[space])) candidates.set(id, { id, at: st[space] })
+    }
+  }
+
+  const list = [...candidates.values()]
   ids.push(stops[0])
   calls.push(true)
 
@@ -312,7 +355,7 @@ export function branchSequence(
     const a = stops[i - 1]
     const b = stops[i]
     if (a === b) continue
-    for (const skipped of passedAlong(stations.get(a)![space], stations.get(b)![space], candidates)) {
+    for (const skipped of passedAlong(stations.get(a)![space], stations.get(b)![space], list)) {
       ids.push(skipped.id)
       calls.push(false)
     }

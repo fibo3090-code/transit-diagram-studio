@@ -107,15 +107,25 @@ export interface CrossingOptions {
   overrides?: Record<string, CrossingOverride>
 }
 
+/** A station, and which lines actually call there. */
+export interface Junction {
+  at: Vec2
+  calling: Set<string>
+}
+
 /**
  * Every point where one line crosses another.
  *
- * `avoid` are the station positions: a crossing that lands on a station is a junction,
- * and breaking a line there would carve a notch out of an interchange.
+ * `avoid` are the stations. A crossing that lands on one is usually a junction, and
+ * breaking a line there would carve a notch out of an interchange — but only if both
+ * lines actually stop. A line merely crossing a station it does not serve has to keep
+ * its break, or it runs straight through the symbol and reads as calling there. That is
+ * the single most misleading thing a transit map can do: state the opposite of the
+ * timetable.
  */
 export function findCrossings(
   lines: RenderedLine[],
-  avoid: Vec2[],
+  avoid: Junction[],
   avoidRadius: number,
   opts: CrossingOptions,
 ): Crossing[] {
@@ -150,10 +160,14 @@ export function findCrossings(
 
       const at = segmentCross(s1.a, s1.b, s2.a, s2.b)
       if (!at) continue
-      if (avoid.some((p) => dist(p, at) < avoidRadius)) continue
 
       const idA = lines[s1.line].id
       const idB = lines[s2.line].id
+      // Suppressed only at a true junction: a station where BOTH lines stop.
+      const junction = avoid.some(
+        (j) => dist(j.at, at) < avoidRadius && j.calling.has(idA) && j.calling.has(idB),
+      )
+      if (junction) continue
       // Two bent stop-pairs can meet more than once; number them so each gets its own
       // identity rather than sharing one override.
       const pairId = crossingKey(idA, s1.segKey, idB, s2.segKey, 0)

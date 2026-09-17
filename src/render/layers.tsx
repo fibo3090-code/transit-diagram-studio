@@ -399,8 +399,12 @@ export function LinesLayer({
         width: r.width,
         segments: r.branches.flatMap((b) => b.segments),
       })),
-      project.stations.map((st) => st[space]),
-      // A crossing this close to a station is a junction, not an overpass.
+      project.stations.map((st) => ({
+        at: st[space],
+        calling: new Set<string>(network.linesAtStation.get(st.id) ?? []),
+      })),
+      // A crossing this close to a station is a junction, not an overpass -- but only
+      // when both lines stop there. One merely crossing keeps its break.
       project.style.stationRadius * 2.2 + project.style.corridorSpacing * 0.5,
       {
         length: project.style.casingLength * scale,

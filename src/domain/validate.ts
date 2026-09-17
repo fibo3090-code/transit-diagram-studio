@@ -1,6 +1,7 @@
 import { colorDistance } from './defaults'
 import { dist } from './geometry'
 import { buildNetwork, lineStopCount, type Network } from './network'
+import { findOverlaps } from './overlaps'
 import type { LineId, Project, StationId } from './types'
 
 export type IssueSeverity = 'error' | 'warning' | 'info'
@@ -157,6 +158,30 @@ export function validateProject(project: Project, network?: Network): Issue[] {
         stationIds: [t.a, t.b],
       })
     }
+  }
+
+  // --- lines running through stations they do not serve -----------------
+
+  // A line drawn straight through a station it does not call at reads as stopping
+  // there: the symbol sits on its stroke, which is exactly how a stop is drawn. No
+  // amount of symbol placement fixes it, because the two genuinely occupy the same
+  // point — the layout has to give, by nudging the station off the alignment or by
+  // making the line serve it.
+  for (const overlap of findOverlaps(project, 'schematic', 0.75, net)) {
+    if (overlap.kind !== 'mark-on-passing-line') continue
+    issues.push({
+      id: `through-${overlap.station}-${overlap.line}`,
+      // Alongside is the renderer failing to separate two parallel lines, and worth a
+      // warning. Merely crossing is a layout choice: the lines genuinely meet at that
+      // point, and only moving the station or the alignment can change it.
+      severity: overlap.alongside ? 'warning' : 'info',
+      title: `"${overlap.lineName}" is drawn through ${overlap.stationName} without stopping`,
+      detail: overlap.alongside
+        ? 'It runs alongside this station without calling, but its stroke reaches the symbol, which reads as stopping.'
+        : 'It crosses here without calling, and passes under the station symbol. Nudging the station off this alignment reads more clearly.',
+      stationIds: [overlap.station],
+      lineIds: overlap.line ? [overlap.line] : undefined,
+    })
   }
 
   // --- colours ----------------------------------------------------------
