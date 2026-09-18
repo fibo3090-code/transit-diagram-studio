@@ -4,6 +4,7 @@ import { applyCsv, linesToCsv, parseCsv, stationsToCsv, type ImportReport } from
 import { LINE_PALETTE, STYLE_PRESETS, modeById } from '../domain/defaults'
 import { segmentKey, splitSegmentKey, type Space } from '../domain/network'
 import type {
+  PlacementKind,
   AssetId,
   BadgeShape,
   BranchDirection,
@@ -883,6 +884,24 @@ function AssetsTab() {
   // Dropped at the middle of nowhere in particular; the map is panned, so a fixed
   // origin would often land off-screen. Centre of the current content is close enough
   // and always reachable.
+  /**
+   * The knottiest station on the map, which is the one an inset is almost always about.
+   * Starting a callout on the busiest interchange means the first thing you see is the
+   * thing worth enlarging, rather than an empty box asking which stop you meant.
+   */
+  const busiest = useMemo(() => {
+    const net = networkOf(project)
+    let best: StationId | null = null
+    let most = 0
+    for (const [id, lines] of net.linesAtStation) {
+      if (lines.length > most) {
+        most = lines.length
+        best = id
+      }
+    }
+    return best
+  }, [project])
+
   const dropAt = () => {
     const b = contentBounds(project, space, 0)
     return { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 }
@@ -894,6 +913,11 @@ function AssetsTab() {
     { kind: 'northArrow', label: 'North arrow', hint: 'For the geographic view' },
     { kind: 'scaleBar', label: 'Scale bar', hint: 'Two bands with end labels' },
     { kind: 'frame', label: 'Frame', hint: 'A double border around the whole poster' },
+    {
+      kind: 'inset',
+      label: 'Interchange inset',
+      hint: 'A magnified callout of one knot of lines, as the London map does',
+    },
   ] as const
 
   return (
@@ -974,7 +998,16 @@ function AssetsTab() {
           {FURNITURE.map((f) => (
             <button
               key={f.kind}
-              onClick={() => addPlacement({ kind: f.kind }, dropAt(), space)}
+              disabled={f.kind === 'inset' && busiest === null}
+              onClick={() =>
+                addPlacement(
+                  f.kind === 'inset'
+                    ? { kind: 'inset', station: busiest!, radius: 150, zoom: 2.2 }
+                    : { kind: f.kind },
+                  dropAt(),
+                  space,
+                )
+              }
               title={f.hint}
               className="rounded-lg border border-slate-200 px-2 py-1.5 text-left text-[11.5px] font-medium text-slate-700 hover:border-slate-900 hover:text-slate-900"
             >
@@ -1459,6 +1492,56 @@ function PlacementInspector({ id }: { id: PlacementId }) {
             className={inputClass}
           />
         </Field>
+      )}
+
+      {pl.what.kind === 'inset' && (
+        <>
+          <Field label="Station" hint="The inset follows this stop wherever it moves.">
+            <select
+              value={pl.what.station}
+              onChange={(e) =>
+                updatePlacement(id, {
+                  what: { ...(pl.what as Extract<PlacementKind, { kind: 'inset' }>), station: e.target.value as StationId },
+                })
+              }
+              className={inputClass}
+            >
+              {[...project.stations]
+                .filter((st) => st.name)
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {st.name}
+                  </option>
+                ))}
+            </select>
+          </Field>
+          <Slider
+            label="How much it covers"
+            value={pl.what.radius}
+            min={40}
+            max={400}
+            step={10}
+            onChange={(v) =>
+              updatePlacement(id, {
+                what: { ...(pl.what as Extract<PlacementKind, { kind: 'inset' }>), radius: v },
+              })
+            }
+          />
+          <Slider
+            label="Magnification"
+            value={Math.round(pl.what.zoom * 100)}
+            min={120}
+            max={500}
+            step={10}
+            suffix="%"
+            onChange={(v) =>
+              updatePlacement(id, {
+                what: { ...(pl.what as Extract<PlacementKind, { kind: 'inset' }>), zoom: v / 100 },
+              })
+            }
+          />
+        </>
       )}
 
       <Slider

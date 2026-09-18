@@ -299,6 +299,14 @@ export interface Asset {
  */
 export type PlacementKind =
   | { kind: 'asset'; assetId: AssetId }
+  /**
+   * A magnified callout of one station and its surroundings.
+   *
+   * Real maps do this wherever a knot of lines will not read at map scale — the official
+   * London map carries several. It is tied to a STATION rather than to a coordinate so
+   * that it follows the place it explains, in both spaces, however the map is recomposed.
+   */
+  | { kind: 'inset'; station: StationId; radius: number; zoom: number }
   | { kind: 'legend' }
   | { kind: 'northArrow' }
   | { kind: 'scaleBar' }

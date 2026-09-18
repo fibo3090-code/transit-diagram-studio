@@ -24,7 +24,7 @@ import { PNG } from 'pngjs'
 import { createSampleProject } from '../src/domain/sample'
 import { scenarios } from '../src/domain/scenarios'
 import { createFromTemplate, TEMPLATES } from '../src/domain/templates'
-import type { Project } from '../src/domain/types'
+import type { Placement, Project } from '../src/domain/types'
 import { renderProjectSvg } from './render'
 
 // Relative to the package root, not to the bundle: this file is compiled into
@@ -48,6 +48,28 @@ function cases(): Case[] {
   for (const t of TEMPLATES) {
     out.push({ name: `template-${t.id}`, project: createFromTemplate(t.id), width: 760 })
   }
+  // An inset redraws the map inside itself, which is the one piece of the renderer that
+  // can recurse or collide with its own ids. Worth a picture of its own.
+  {
+    const project = createFromTemplate('radial')
+    const busiest = [...project.stations].sort(
+      (a, b) => b.modes.length - a.modes.length,
+    )[0]
+    const centre = project.stations.find((s) => s.name === 'Central') ?? busiest
+    project.placements.push({
+      id: 'pl_inset' as Placement['id'],
+      what: { kind: 'inset', station: centre.id, radius: 150, zoom: 2.2 },
+      geo: { x: 1500, y: 300 },
+      schematic: { x: 1500, y: 300 },
+      scale: 1,
+      angle: 0,
+      opacity: 1,
+      locked: false,
+      hidden: false,
+    })
+    out.push({ name: 'inset-callout', project, width: 900 })
+  }
+
   out.push({ name: 'example-network', project: createSampleProject(), width: 2200 })
   return out
 }

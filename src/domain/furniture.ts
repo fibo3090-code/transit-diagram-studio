@@ -26,6 +26,11 @@ export function placementExtent(project: Project, pl: Placement): Extent {
       const a = project.assets.find((x) => x.id === (pl.what as { assetId: string }).assetId)
       return { w: a?.width ?? 0, h: a?.height ?? 0 }
     }
+    case 'inset': {
+      const it = pl.what as { radius: number; zoom: number }
+      const side = it.radius * 2 * it.zoom
+      return { w: side, h: side + fs * 1.6 }
+    }
     case 'northArrow':
       return { w: 44, h: 44 }
     case 'scaleBar':

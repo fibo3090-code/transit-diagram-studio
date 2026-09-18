@@ -1744,13 +1744,19 @@ export function RouteLayer({
  * All of it carries both positions for the same reason a station does. A legend placed
  * on the diagram should not move because the geographic view was nudged.
  */
+const EMPTY_SET = new Set<never>()
+const NO_OP = () => {}
+
 export function PlacementLayer({
   project,
+  network,
   space,
   selected,
   onPointerDown,
 }: {
   project: Project
+  /** Only needed to draw an inset, which redraws a piece of the map inside itself. */
+  network?: Network
   space: Space
   selected: Set<PlacementId>
   onPointerDown: (e: React.PointerEvent, id: PlacementId) => void
@@ -1787,6 +1793,105 @@ export function PlacementLayer({
               <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="none" stroke={foreground} strokeDasharray="4 3" opacity={0.4} />
             )
           }
+        } else if (pl.what.kind === 'inset') {
+          const spec = pl.what
+          const station = project.stations.find((st) => st.id === spec.station)
+          const side = spec.radius * 2 * spec.zoom * pl.scale
+          const clipId = `tds-inset-${pl.id}`
+          body =
+            station && network ? (
+              <g>
+                <defs>
+                  <clipPath id={clipId}>
+                    <rect
+                      x={-side / 2}
+                      y={-h / 2}
+                      width={side}
+                      height={side}
+                      rx={Math.min(14, side * 0.06)}
+                    />
+                  </clipPath>
+                </defs>
+                <rect
+                  x={-side / 2}
+                  y={-h / 2}
+                  width={side}
+                  height={side}
+                  rx={Math.min(14, side * 0.06)}
+                  fill={background}
+                />
+                {/*
+                  The same layers, drawn again at a larger scale and clipped to the
+                  callout. Re-rendering rather than cloning is what keeps an inset
+                  honest: it cannot show a version of the map that no longer exists,
+                  because it IS the map, drawn a second time.
+                */}
+                <g clipPath={`url(#${clipId})`} data-inset={pl.id} pointerEvents="none">
+                  <g
+                    transform={
+                      `translate(0 ${-h / 2 + side / 2}) scale(${spec.zoom * pl.scale}) ` +
+                      `translate(${-station[space].x} ${-station[space].y})`
+                    }
+                  >
+                    <LinesLayer
+                      project={project}
+                      network={network}
+                      space={space}
+                      selectedLines={EMPTY_SET}
+                      onLinePointerDown={NO_OP}
+                      onSegmentPointerDown={NO_OP}
+                      onCrossingPointerDown={NO_OP}
+                    />
+                    <StationsLayer
+                      project={project}
+                      network={network}
+                      space={space}
+                      selected={EMPTY_SET}
+                      onPointerDown={NO_OP}
+                    />
+                    <LabelsLayer
+                      project={project}
+                      network={network}
+                      space={space}
+                      onPointerDown={NO_OP}
+                    />
+                  </g>
+                </g>
+                <rect
+                  x={-side / 2}
+                  y={-h / 2}
+                  width={side}
+                  height={side}
+                  rx={Math.min(14, side * 0.06)}
+                  fill="none"
+                  stroke={foreground}
+                  strokeWidth={1.2}
+                  opacity={0.55}
+                />
+                <text
+                  x={0}
+                  y={-h / 2 + side + fontSize * 1.15}
+                  textAnchor="middle"
+                  fontFamily={fontFamily}
+                  fontSize={fontSize}
+                  fontWeight={600}
+                  fill={foreground}
+                >
+                  {pl.label || station.name}
+                </text>
+              </g>
+            ) : (
+              <rect
+                x={-w / 2}
+                y={-h / 2}
+                width={w}
+                height={h}
+                fill="none"
+                stroke={foreground}
+                strokeDasharray="4 3"
+                opacity={0.4}
+              />
+            )
         } else if (pl.what.kind === 'northArrow') {
           const r = 22
           body = (

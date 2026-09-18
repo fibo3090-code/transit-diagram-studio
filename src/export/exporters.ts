@@ -124,10 +124,17 @@ export function buildSvg(
   for (const el of clone.querySelectorAll('[style]')) el.removeAttribute('style')
   for (const el of clone.querySelectorAll('[data-hit]')) el.removeAttribute('data-hit')
 
+  // An inset redraws the map inside itself, so the same layer and line groups appear a
+  // second time. Stamping ids on those would produce duplicates, and a duplicate id in
+  // an SVG is the kind of thing that silently changes what `use` and `clipPath` resolve
+  // to in someone else's editor.
+  const outside = (el: Element) => !el.closest('[data-inset]')
   for (const g of clone.querySelectorAll('[data-layer]')) {
+    if (!outside(g)) continue
     g.setAttribute('id', `layer-${g.getAttribute('data-layer')}`)
   }
   for (const g of clone.querySelectorAll('[data-line-name]')) {
+    if (!outside(g)) continue
     const name = g.getAttribute('data-line-name') || 'line'
     g.setAttribute('id', `line-${name.replace(/[^\w-]+/g, '-')}`)
   }

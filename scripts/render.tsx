@@ -60,7 +60,13 @@ export function renderProjectSvg(project: Project, space: Space = 'schematic'): 
       <LabelsLayer project={project} network={network} space={space} onPointerDown={noop} />
       <BadgeLayer project={project} network={network} space={space} />
       {project.view.showPlacements && (
-        <PlacementLayer project={project} space={space} selected={none} onPointerDown={noop} />
+        <PlacementLayer
+          project={project}
+          network={network}
+          space={space}
+          selected={none}
+          onPointerDown={noop}
+        />
       )}
     </g>,
   )

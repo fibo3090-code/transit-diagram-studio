@@ -986,6 +986,7 @@ export function MapView() {
 
         <PlacementLayer
           project={project}
+          network={network}
           space={space}
           selected={selectedPlacements}
           onPointerDown={onPlacementPointerDown}
