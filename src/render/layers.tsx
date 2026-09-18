@@ -180,6 +180,18 @@ export function TerrainPatterns() {
   )
 }
 
+/**
+ * Which alternating wash a fare band gets. Reads the number out of the zone's name so
+ * two bands called "3" and "4" always differ, whatever order the shapes were drawn in.
+ */
+function zoneParity(name: string | undefined): number {
+  const digits = (name ?? '').match(/\d+/)
+  if (digits) return Number(digits[0])
+  let sum = 0
+  for (const ch of name ?? '') sum += ch.charCodeAt(0)
+  return sum
+}
+
 export function TerrainLayer({
   project,
   space,
@@ -231,7 +243,16 @@ export function TerrainLayer({
         const isFilled = t.closed && t.fill !== 'none' && (style.fill || t.kind === 'zone')
         const patternId =
           t.fill === 'hatch' ? 'tds-hatch' : t.fill === 'stipple' ? 'tds-stipple' : null
-        const flat = t.kind === 'zone' ? 'rgba(37,99,235,0.07)' : style.fill
+        // Fare bands alternate their wash, which is how the London map keeps zone 3 from
+        // dissolving into zone 4. Parity comes from the zone's own number where it has
+        // one, so the bands stay in step however the shapes were drawn or reordered.
+        const zoneRank = t.kind === 'zone' ? zoneParity(t.zone ?? t.name) : 0
+        const flat =
+          t.kind === 'zone'
+            ? zoneRank % 2 === 0
+              ? 'rgba(15,23,42,0.05)'
+              : 'rgba(15,23,42,0.012)'
+            : style.fill
 
         return (
           <g key={t.id}>
@@ -265,6 +286,18 @@ export function TerrainLayer({
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 onPointerDown={hit}
+              />
+            )}
+            {t.kind === 'zone' && (
+              <path
+                d={closedPath}
+                fill="none"
+                fillRule="evenodd"
+                stroke={project.style.foreground}
+                strokeWidth={1}
+                strokeDasharray="6 5"
+                opacity={0.28}
+                pointerEvents="none"
               />
             )}
             {t.kind === 'zone' && t.name && (

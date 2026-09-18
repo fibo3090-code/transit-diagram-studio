@@ -348,3 +348,27 @@ export function rectHitsSegment(r: RectLike, p1: Vec2, p2: Vec2, pad = 2): boole
   }
   return false
 }
+
+/**
+ * Is this point inside the ring?
+ *
+ * Even-odd ray casting: count the edges a ray to the right crosses. Rings traced by hand
+ * are not guaranteed convex, wound consistently, or even simple, and this is the test
+ * that does not care about any of that.
+ */
+export function pointInPolygon(p: Vec2, ring: Vec2[]): boolean {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i]
+    const b = ring[j]
+    if (a.y > p.y === b.y > p.y) continue
+    if (p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside
+  }
+  return inside
+}
+
+/** Inside the shape, counting rings cut out of it as outside. */
+export function pointInShape(p: Vec2, outer: Vec2[], holes: Vec2[][] = []): boolean {
+  if (!pointInPolygon(p, outer)) return false
+  return !holes.some((h) => pointInPolygon(p, h))
+}

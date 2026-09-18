@@ -13,6 +13,8 @@ import {
   dist,
   octilinearizeRun,
   offsetPolyline,
+  pointInPolygon,
+  pointInShape,
   polygonPath,
   polygonPathWithHoles,
   polylinePath,
@@ -1840,6 +1842,40 @@ check('a calling pattern rewrites a branch without losing its ends', () => {
   const all = applyCallingMask({ ...branch, stops: only.stops, passes: only.passes }, stations, 'all')!
   expect(all.stops.length, 6, 'every stop calls again: ')
   expect(all.passes.length, 0)
+})
+
+check('a point inside a band is inside, and a hole in it is not', () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ]
+  assert(pointInPolygon({ x: 50, y: 50 }, square), 'the middle is inside')
+  assert(!pointInPolygon({ x: 150, y: 50 }, square), 'and outside is not')
+
+  // Concave, because rings traced by hand rarely are not.
+  const notch = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 60, y: 100 },
+    { x: 60, y: 40 },
+    { x: 40, y: 40 },
+    { x: 40, y: 100 },
+    { x: 0, y: 100 },
+  ]
+  assert(pointInPolygon({ x: 50, y: 20 }, notch), 'below the notch is inside')
+  assert(!pointInPolygon({ x: 50, y: 80 }, notch), 'the notch itself is not')
+
+  const hole = [
+    { x: 40, y: 40 },
+    { x: 60, y: 40 },
+    { x: 60, y: 60 },
+    { x: 40, y: 60 },
+  ]
+  assert(!pointInShape({ x: 50, y: 50 }, square, [hole]), 'an island is not the lake')
+  assert(pointInShape({ x: 20, y: 20 }, square, [hole]), 'but the water around it is')
 })
 
 // ---------------------------------------------------------------------------

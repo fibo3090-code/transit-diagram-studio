@@ -15,7 +15,7 @@ import { applyPatches, enablePatches, produce, produceWithPatches, type Patch } 
 import { create } from 'zustand'
 
 import { makeBranch, makeStation, makeTerrain, nextUnusedColor, presetById } from '../domain/defaults'
-import { add, dist, octilinearizeRun, simplify, sub } from '../domain/geometry'
+import { add, dist, octilinearizeRun, pointInShape, simplify, sub } from '../domain/geometry'
 import {
   newBranchId,
   newLineId,
@@ -304,6 +304,11 @@ interface EditorState {
    * handles reshape it from there.
    */
   addTerrainHole: (id: TerrainId, space: Space) => void
+  /**
+   * Stamp each station with the fare zone whose band contains it. Pass an empty list to
+   * use every band. Returns how many stations were covered.
+   */
+  assignZonesFrom: (ids: TerrainId[]) => number
   simplifyTerrain: (id: TerrainId, epsilon: number) => void
   resetTerrainToGeographic: (ids: TerrainId[]) => void
 
@@ -1089,6 +1094,44 @@ export const useEditor = create<EditorState>((set, get) => {
         t.geo.splice(index, 1)
         t.schematic.splice(index, 1)
       }),
+
+    /**
+     * Give every station inside a fare-zone band that band's name.
+     *
+     * The zone was a free-text field on the station and a shape on the map with no
+     * relationship between them, so a map with sixty stops meant typing sixty numbers
+     * and keeping them right as the map moved. The band already knows which stops are
+     * inside it.
+     */
+    assignZonesFrom: (ids) => {
+      const project = get().project
+      if (!project) return 0
+      const space = get().space
+      const bands = project.terrain.filter(
+        (t) => t.kind === 'zone' && !t.hidden && (ids.length === 0 || ids.includes(t.id)),
+      )
+      if (bands.length === 0) return 0
+
+      const assign = new Map<StationId, string>()
+      for (const band of bands) {
+        const name = (band.zone ?? band.name ?? '').trim()
+        if (!name || band[space].length < 3) continue
+        for (const s of project.stations) {
+          if (pointInShape(s[space], band[space], band.holes.map((h) => h[space]))) {
+            assign.set(s.id, name)
+          }
+        }
+      }
+      if (assign.size === 0) return 0
+
+      get().mutate('Set zones from the bands', (d) => {
+        for (const s of d.stations) {
+          const zone = assign.get(s.id)
+          if (zone && s.zone !== zone) s.zone = zone
+        }
+      })
+      return assign.size
+    },
 
     simplifyTerrain: (id, epsilon) =>
       get().mutate('Simplify terrain', (d) => {

@@ -1269,6 +1269,8 @@ export function Inspector() {
 /** A traced shape: how it is filled, the rings cut out of it, and free text styling. */
 function TerrainInspector({ id }: { id: TerrainId }) {
   const project = useEditor((s) => s.project)!
+  const assignZonesFrom = useEditor((s) => s.assignZonesFrom)
+  const [zoned, setZoned] = useState<number | null>(null)
   const space = useEditor((s) => s.space)
   const updateTerrain = useEditor((s) => s.updateTerrain)
   const addTerrainHole = useEditor((s) => s.addTerrainHole)
@@ -1292,14 +1294,37 @@ function TerrainInspector({ id }: { id: TerrainId }) {
       />
 
       {t.kind === 'zone' && (
-        <Field label="Zone" hint="Stations carrying this zone name belong to this band.">
-          <input
-            value={t.zone ?? ''}
-            onChange={(e) => updateTerrain(id, { zone: e.target.value || undefined })}
-            placeholder="e.g. 1"
-            className={inputClass}
-          />
-        </Field>
+        <>
+          <Field label="Zone" hint="Stations carrying this zone name belong to this band.">
+            <input
+              value={t.zone ?? ''}
+              onChange={(e) => updateTerrain(id, { zone: e.target.value || undefined })}
+              placeholder="e.g. 1"
+              className={inputClass}
+            />
+          </Field>
+          {/*
+            The band already knows which stops are inside it. Typing that out station by
+            station is work the shape can do, and work that goes stale the moment the
+            map moves.
+          */}
+          <Button
+            className="w-full"
+            onClick={() => {
+              const n = assignZonesFrom([id])
+              setZoned(n)
+            }}
+          >
+            Give the stops inside this band its zone
+          </Button>
+          {zoned !== null && (
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              {zoned === 0
+                ? 'No stops fell inside it. Give the band a zone name and check the shape is closed.'
+                : `${zoned} station${zoned === 1 ? '' : 's'} updated.`}
+            </p>
+          )}
+        </>
       )}
 
       {t.kind === 'label' ? (
