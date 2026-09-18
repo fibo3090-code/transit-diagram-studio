@@ -13,7 +13,9 @@ npm run dev      # http://localhost:3000
 | `npm run dev` | Dev server on port 3000 |
 | `npm run build` | Static production build into `dist/` |
 | `npm run preview` | Serve the built output |
-| `npm test` | 110 domain checks (pure logic, no browser) |
+| `npm test` | 110 domain checks and 9 visual checks |
+| `npm run test:domain` | just the domain checks (pure logic, no browser) |
+| `npm run test:visual` | render every case headlessly and compare against a committed picture. `-- --update` accepts a change you meant |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | typecheck + test + build |
 | `/lab` | the symbol lab — every awkward shape drawn beside what the overlap checker measured |

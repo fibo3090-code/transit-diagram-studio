@@ -11,8 +11,10 @@
     "preview": "vite preview",
     "generate-routes": "tsr generate",
     "typecheck": "tsc --noEmit",
-    "test": "esbuild src/domain/domain.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/domain.test.mjs --log-level=error && node node_modules/.tmp/domain.test.mjs",
-    "check": "npm run typecheck && npm run test && npm run build"
+    "test": "npm run test:domain && npm run test:visual",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "test:domain": "esbuild src/domain/domain.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.tmp/domain.test.mjs --log-level=error && node node_modules/.tmp/domain.test.mjs",
+    "test:visual": "esbuild scripts/visual.ts --bundle --platform=node --format=cjs --jsx=automatic --outfile=node_modules/.tmp/visual.cjs --log-level=error --external:@resvg/resvg-js && node node_modules/.tmp/visual.cjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -24,15 +26,19 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@tanstack/router-cli": "^1.132.0",
     "@tanstack/router-plugin": "^1.168.0",
     "@types/node": "^22.10.2",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "esbuild": "^0.28.0",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
     "typescript": "^6.0.2",
-    "vite": "^8.0.0",
-    "esbuild": "^0.28.0"
+    "vite": "^8.0.0"
   },
   "allowScripts": [
     "esbuild"
