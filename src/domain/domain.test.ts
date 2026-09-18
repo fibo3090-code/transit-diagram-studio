@@ -26,6 +26,7 @@ import { normalizeProject } from './migrate'
 import { createSampleProject } from './sample'
 import { scenarios } from './scenarios'
 import { createFromTemplate, TEMPLATES } from './templates'
+import { tidyLayout } from './layout'
 import { describeOverlap, findOverlaps } from './overlaps'
 import { contentBounds } from '../export/exporters'
 import {
@@ -1905,6 +1906,92 @@ check('every starter template builds a network the rest of the app accepts', () 
         )
       }
     }
+  }
+})
+
+check('tidying pulls a jumbled map back onto 45 degrees', () => {
+  const p = createFromTemplate('grid')
+  // Shove every stop off the lattice by a repeatable but awkward amount. No randomness:
+  // a test that shuffles cannot tell a regression from a different roll.
+  p.stations.forEach((s, i) => {
+    s.schematic = {
+      x: s.schematic.x + ((i * 37) % 121) - 60,
+      y: s.schematic.y + ((i * 53) % 119) - 59,
+    }
+  })
+  const net = buildNetwork(p)
+
+  const offBy = (project: Project) => {
+    const at = stationMap(project)
+    let worst = 0
+    let n = 0
+    let sum = 0
+    const seen = new Set<string>()
+    for (const [id, set] of net.neighbours) {
+      for (const other of set) {
+        const key = id < other ? `${id}|${other}` : `${other}|${id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const a = at.get(id)!.schematic
+        const b = at.get(other)!.schematic
+        const ang = Math.atan2(b.y - a.y, b.x - a.x)
+        const k = Math.round(ang / (Math.PI / 4))
+        const dev = Math.abs(ang - k * (Math.PI / 4)) * (180 / Math.PI)
+        worst = Math.max(worst, dev)
+        sum += dev
+        n++
+      }
+    }
+    return { worst, mean: sum / Math.max(1, n) }
+  }
+
+  const before = offBy(p)
+  assert(before.mean > 9, `the fixture should start crooked, mean was ${before.mean}`)
+
+  const result = tidyLayout(p, net)
+  for (const s of p.stations) {
+    const next = result.positions.get(s.id)
+    if (next) s.schematic = next
+  }
+  const after = offBy(p)
+  assert(
+    after.mean < before.mean / 2,
+    `tidying should halve the crookedness: ${before.mean.toFixed(1)} -> ${after.mean.toFixed(1)}`,
+  )
+  assert(after.worst < 30, `and leave nothing wildly off axis, worst was ${after.worst.toFixed(1)}`)
+
+  // Nothing may end up on the wrong side of a neighbour: that is a different map, not
+  // a tidier one.
+  const before2 = createFromTemplate('grid')
+  const order = new Map(before2.stations.map((s) => [s.name, s.schematic]))
+  for (const s of p.stations) {
+    for (const n of net.neighbours.get(s.id) ?? []) {
+      const other = p.stations.find((x) => x.id === n)!
+      const o1 = order.get(s.name)
+      const o2 = order.get(other.name)
+      if (!o1 || !o2) continue
+      if (Math.sign(o2.x - o1.x) !== 0 && Math.abs(o2.x - o1.x) > 20) {
+        assert(
+          Math.sign(other.schematic.x - s.schematic.x) === Math.sign(o2.x - o1.x),
+          `${s.name} and ${other.name} swapped sides horizontally`,
+        )
+      }
+    }
+  }
+})
+
+check('tidying the same map twice gives the same map', () => {
+  const p = createFromTemplate('radial')
+  p.stations.forEach((s, i) => {
+    s.schematic = { x: s.schematic.x + ((i * 29) % 41) - 20, y: s.schematic.y + ((i * 17) % 37) - 18 }
+  })
+  const net = buildNetwork(p)
+  const a = tidyLayout(p, net)
+  const b = tidyLayout(p, net)
+  for (const [id, q] of a.positions) {
+    const w = b.positions.get(id)!
+    near(q.x, w.x, 1e-9, `${id} x: `)
+    near(q.y, w.y, 1e-9, `${id} y: `)
   }
 })
 

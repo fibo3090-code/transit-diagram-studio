@@ -24,6 +24,8 @@ import { PNG } from 'pngjs'
 import { createSampleProject } from '../src/domain/sample'
 import { scenarios } from '../src/domain/scenarios'
 import { createFromTemplate, TEMPLATES } from '../src/domain/templates'
+import { tidyLayout } from '../src/domain/layout'
+import { buildNetwork } from '../src/domain/network'
 import type { Placement, Project } from '../src/domain/types'
 import { renderProjectSvg } from './render'
 
@@ -68,6 +70,33 @@ function cases(): Case[] {
       hidden: false,
     })
     out.push({ name: 'inset-callout', project, width: 900 })
+  }
+
+  // A crooked map and the same map tidied, so the solver's output is something you can
+  // look at rather than a number in a test.
+  {
+    const crooked = createFromTemplate('grid')
+    crooked.stations.forEach((st, i) => {
+      st.schematic = {
+        x: st.schematic.x + ((i * 37) % 121) - 60,
+        y: st.schematic.y + ((i * 53) % 119) - 59,
+      }
+    })
+    out.push({ name: 'tidy-before', project: crooked, width: 700 })
+
+    const tidied = createFromTemplate('grid')
+    tidied.stations.forEach((st, i) => {
+      st.schematic = {
+        x: st.schematic.x + ((i * 37) % 121) - 60,
+        y: st.schematic.y + ((i * 53) % 119) - 59,
+      }
+    })
+    const moved = tidyLayout(tidied, buildNetwork(tidied))
+    for (const st of tidied.stations) {
+      const next = moved.positions.get(st.id)
+      if (next) st.schematic = next
+    }
+    out.push({ name: 'tidy-after', project: tidied, width: 700 })
   }
 
   out.push({ name: 'example-network', project: createSampleProject(), width: 2200 })

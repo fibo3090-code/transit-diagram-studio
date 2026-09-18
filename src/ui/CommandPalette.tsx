@@ -58,6 +58,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const undo = useEditor((s) => s.undo)
   const redo = useEditor((s) => s.redo)
   const travel = useEditor((s) => s.travel)
+  const tidy = useEditor((s) => s.tidy)
   const timeline = useEditor((s) => s.timeline)
 
   useEffect(() => inputRef.current?.focus(), [])
@@ -112,6 +113,13 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       { id: 't-line', label: 'Line tool', hint: 'L', group: 'Do', run: () => setTool('line') },
       { id: 't-terrain', label: 'Terrain tool', hint: 'T', group: 'Do', run: () => setTool('terrain') },
       { id: 't-bend', label: 'Bend tool', hint: 'B', group: 'Do', run: () => setTool('bend') },
+      {
+        id: 'tidy-all',
+        label: 'Tidy the whole diagram',
+        hint: 'pull every line onto 45° and even spacing — one undo puts it back',
+        group: 'Do',
+        run: () => tidy([]),
+      },
       { id: 'undo', label: 'Undo', hint: 'Ctrl+Z', group: 'Do', run: undo },
       { id: 'redo', label: 'Redo', hint: 'Ctrl+Shift+Z', group: 'Do', run: redo },
       {
@@ -179,6 +187,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     redo,
     travel,
     timeline,
+    tidy,
   ])
 
   const results = useMemo(() => {

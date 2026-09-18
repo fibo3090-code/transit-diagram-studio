@@ -34,6 +34,7 @@ import {
   swapAcrossRun,
   type CallingMask,
 } from '../domain/network'
+import { tidyLayout } from '../domain/layout'
 import { findRoute, trackPath, type Route } from '../domain/routing'
 import type {
   Asset,
@@ -339,6 +340,11 @@ interface EditorState {
 
   // -- layout commands
   straightenLine: (lineId: LineId) => void
+  /**
+   * Hill-climb the given stations — or the whole map, if none are given — towards
+   * octilinear edges and even spacing. Returns how many moved.
+   */
+  tidy: (ids: StationId[]) => number
   distributeEvenly: (ids: StationId[], space: Space) => void
   alignStations: (ids: StationId[], axis: 'x' | 'y', space: Space) => void
 }
@@ -1353,6 +1359,28 @@ export const useEditor = create<EditorState>((set, get) => {
           }
         }
       }),
+
+    /**
+     * Pull a selection — or the whole map — onto 45° and even spacing.
+     *
+     * One undoable step, because that is the only way a change this large is safe to
+     * try: the interesting question is always "what would it look like", and the answer
+     * has to be one keystroke away from being taken back.
+     */
+    tidy: (ids) => {
+      const project = get().project
+      if (!project) return 0
+      const space = get().space
+      const result = tidyLayout(project, networkOf(project), { space, ids })
+      if (result.moved === 0) return 0
+      get().mutate(ids.length > 0 ? 'Tidy these stops' : 'Tidy the diagram', (d) => {
+        for (const s of d.stations) {
+          const next = result.positions.get(s.id)
+          if (next) s[space] = next
+        }
+      })
+      return result.moved
+    },
 
     distributeEvenly: (ids, space) =>
       get().mutate('Distribute evenly', (d) => {

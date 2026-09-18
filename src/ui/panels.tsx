@@ -2077,6 +2077,8 @@ function StationInspector({ id }: { id: StationId }) {
 
 function MultiStationInspector({ ids }: { ids: StationId[] }) {
   const space = useEditor((s) => s.space)
+  const tidy = useEditor((s) => s.tidy)
+  const [tidied, setTidied] = useState<number | null>(null)
   const distribute = useEditor((s) => s.distributeEvenly)
   const align = useEditor((s) => s.alignStations)
   const deleteStations = useEditor((s) => s.deleteStations)
@@ -2099,6 +2101,25 @@ function MultiStationInspector({ ids }: { ids: StationId[] }) {
         <Button className="w-full" disabled={ids.length < 3} onClick={() => distribute(ids, space)}>
           Space them evenly
         </Button>
+        {/*
+          The whole job of drawing a schematic, offered as one button. It is one undoable
+          step on purpose: the interesting question is always "what would it look like",
+          and the answer has to be a keystroke away from being taken back.
+        */}
+        <Button
+          className="w-full"
+          disabled={ids.length < 3}
+          onClick={() => setTidied(tidy(ids))}
+        >
+          Tidy onto 45°
+        </Button>
+        {tidied !== null && (
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            {tidied === 0
+              ? 'Already as tidy as this will get.'
+              : `${tidied} stop${tidied === 1 ? '' : 's'} moved. Ctrl+Z puts it back.`}
+          </p>
+        )}
         {ids.length === 2 && (
           <>
             <Button className="w-full" onClick={() => addTransfer(ids[0], ids[1])}>
