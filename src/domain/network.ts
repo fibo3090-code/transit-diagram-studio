@@ -311,6 +311,18 @@ function passedAlong(
   for (const c of candidates) {
     const t = ((c.at.x - a.x) * dx + (c.at.y - a.y) * dy) / len2
     if (t <= 1e-6 || t >= 1 - 1e-6) continue
+
+    // Falling between the ends is not the same as being on the line.
+    //
+    // `candidates` is the whole branch's worth, so a station genuinely sitting on one
+    // segment is also offered to every other segment, and any of them whose projection
+    // range happens to contain it would swallow it — dragging the centreline out to
+    // that station and back as a spike across the map. The perpendicular distance is
+    // what actually decides membership.
+    const px = a.x + dx * t
+    const py = a.y + dy * t
+    if (Math.hypot(c.at.x - px, c.at.y - py) > ON_SEGMENT_TOLERANCE) continue
+
     out.push({ id: c.id, at: c.at, t })
   }
   return out.sort((x, y) => x.t - y.t)

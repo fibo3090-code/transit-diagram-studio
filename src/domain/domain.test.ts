@@ -30,6 +30,7 @@ import { applyCsv, parseCsv } from './csv'
 import {
   branchGeometry,
   buildNetwork,
+  stationMap,
   isForward,
   isRing,
   segmentKey,
@@ -1486,6 +1487,61 @@ check('the example has no station symbols on top of each other', () => {
     (o) => o.kind === 'marks-collide',
   )
   assert(collisions.length === 0, collisions.map(describeOverlap).join('; '))
+})
+
+check('a line never wanders off the path between its own stops', () => {
+  // A pass-through lies ON the run by definition, so weaving it in cannot make the
+  // line any longer. If it does, something not on the segment was inserted into it and
+  // the centreline has been dragged out to that station and back — a spike across the
+  // map, which is exactly how this failed.
+  const p = createSampleProject()
+  const net = buildNetwork(p)
+  const where = stationMap(p)
+
+  for (const line of p.lines) {
+    for (const b of line.branches) {
+      const g = branchGeometry(p, net, line, b, 'schematic', where)
+      if (!g) continue
+      let drawn = 0
+      for (let i = 0; i < g.points.length - 1; i++) {
+        drawn += dist(g.points[i], g.points[i + 1])
+      }
+      let direct = 0
+      const stops = b.stops.map((id) => where.get(id)).filter((x): x is Station => !!x)
+      for (let i = 0; i < stops.length - 1; i++) {
+        direct += dist(stops[i].schematic, stops[i + 1].schematic)
+      }
+      if (direct < 1) continue
+      assert(
+        drawn <= direct * 1.02,
+        `${line.name}: drawn ${Math.round(drawn)} against ${Math.round(direct)} between its stops`,
+      )
+    }
+  }
+})
+
+check('a station on one segment is not dragged into another', () => {
+  // An L: the corner station sits on neither leg's interior, and a station on the
+  // horizontal leg projects neatly onto the vertical one's range. Only membership of
+  // the segment itself may count.
+  const p: Project = createEmptyProject('L')
+  const a = station('A', 0, 0)
+  const corner = station('Corner', 200, 0)
+  const b = station('B', 200, 200)
+  const onTop = station('OnTop', 100, 0)
+  p.stations = [a, corner, b, onTop]
+  p.lines = [line('L1', [[a.id, corner.id, b.id]]), line('L2', [[onTop.id, corner.id]])]
+
+  const net = buildNetwork(p)
+  const l1 = p.lines[0]
+  const g = branchGeometry(p, net, l1, l1.branches[0], 'schematic')!
+  // OnTop lies on A->Corner and must appear once, between them, and nowhere else.
+  const xs = g.points.map((q) => `${q.x},${q.y}`)
+  expect(xs.filter((q) => q === '100,0').length, 1, 'inserted exactly once: ')
+  assert(
+    !g.points.some((q) => q.x === 100 && q.y === 200),
+    'and never onto the vertical leg it merely projects onto',
+  )
 })
 
 // ---------------------------------------------------------------------------
