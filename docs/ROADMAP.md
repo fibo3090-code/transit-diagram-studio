@@ -13,6 +13,9 @@ Status labels: **FIXED** · **DONE**.
 finding and evidence, with the resolution recorded under it, so the reasoning survives
 alongside the fix.
 
+Part G records a second round, from 2026-09-18: what looking at the exported map turned
+up, and the five phases built in response.
+
 ---
 
 ## Part A — Code defects
@@ -310,3 +313,149 @@ The library and the ten asset types.
 - **Theme verification was briefly misleading.** The screenshot tool served stale frames
   while `getComputedStyle` reported the truth; a fresh browser session settled it. Worth
   remembering that a screenshot is evidence about a pipeline, not only about a page.
+
+
+---
+
+## Part G — The second round
+
+Everything in Parts A–F shipped, the map was exported and looked at, and this is what
+looking at it turned up. Ordered as it was built, in five phases: a safety net first,
+because the whole of Part F's postscript was about not having one.
+
+### Phase 0 — the safety net, and four defects
+
+**G1. Rendering had no test at all — DONE.** Part F said so and nothing had changed:
+every drawing change was checked by eye, and four of six bugs in one stretch were things
+a person had to notice in a screenshot. `scripts/render.tsx` mounts the *real* layer
+components through React's server renderer — there is no second drawing routine to drift
+out of step with the first — and `scripts/visual.ts` rasterises each case with resvg and
+compares it against a committed picture, writing the difference to disk when it fails.
+Fifteen cases: eight scenarios, three templates, an inset, a tidy before-and-after, and
+the whole example map.
+
+A small fraction of differing pixels is allowed, because text is rasterised by whatever
+fonts the machine has. Tight enough to catch a moved label, loose enough not to cry over
+a pixel of antialiasing.
+
+**G2. Lines swerved where a corridor gained a member — DONE.** Offsets were centred on
+each corridor independently, so a bundle that picked up a third line pushed the two
+already running together half a spacing sideways and back again after the junction. Dead
+straight lines drew as shallow S-bends, visible either side of Kestrel Hill and again at
+Sallowfield. Corridors are now walked, and where two adjacent ones share lines the second
+is shifted so the shared lines keep their place — what real maps do: hold what was
+already there, put the newcomer on the outside.
+
+**G3. Marks floated off the line they named — DONE.** Corridor offsets are right in the
+middle of a straight run and wrong at a corner, where the mitre pulls the stroke away
+from the station. A mark is now snapped onto the stroke it names, taken only when it
+keeps clear of the other marks, since two dots on top of each other is a worse lie than
+one slightly off its track.
+
+Found while fixing it: **the overlap checker was pairing marks with calling lines by
+position**, which falls out of step the moment a caller has no mark of its own. Each mark
+now names its own line. The checker had been reporting the wrong station for months.
+
+**G4. Labels vanished under furniture — DONE.** A legend or a title block is opaque and
+drawn last, so a name that landed under one was simply gone — invisible while composing,
+discovered only in the exported file. Labels now treat placements as obstacles.
+
+**G5. Fare zones read as rendering debris — DONE.** A bare grey digit floating above the
+name, colliding with whatever label sat above. Now a boxed chip on the label's own line,
+with room reserved for it.
+
+**G6. The tool bar sat on top of the map — DONE.** Parked in the top-left, it hid part of
+the diagram permanently and no amount of panning helped. A forty-eight pixel gutter costs
+that width once and hides nothing.
+
+### Phase 1 — two features that already existed and could not be reached
+
+Both of these were in the model from the beginning. Neither was usable, which is the same
+thing as not existing.
+
+**G7. Corridor order — DONE.** Reachable only by selecting a *line*, buried at the foot of
+that inspector, listed one row per *segment* and capped at six of them. Putting the red
+line above the blue one along a twelve-segment run meant twelve trips through a panel,
+each identified by a pair of station names. Ordering is a question about a RUN:
+`sharedRun` finds every corridor a pair of lines keeps each other company on, and one
+move rewrites all of them in a single undoable step. Asked where you are looking, in the
+station inspector.
+
+**G8. Per-crossing overpasses — DONE.** Every crossing has always had its own gap, its own
+choice of which line goes over, and its own off switch. The hit target was fourteen
+diagram units — nine pixels at a working zoom — invisible, with no hover and no cursor
+change. Now a constant size on screen, lit under the pointer, ringed wherever it has been
+tuned, shift-clickable, with one button to apply the settings to every crossing the same
+two lines make.
+
+> Worth generalising: a feature nobody can find is a feature that does not exist, and the
+> code review that would have caught both of these is not reading the module — it is
+> trying to use it.
+
+### Phase 2 — drawing speed
+
+**G9. Draw along existing track — DONE.** A line sharing a corridor for twenty stops meant
+twenty clicks, and one misplaced click put a kink in a run that should have been dead
+straight. `trackPath` walks the physical graph weighted by distance — a different question
+from the journey planner, which prices changes because passengers care about them.
+
+**G10. Calling patterns — DONE.** Every stop, every other, the others, or copied from
+another branch. The ends always call.
+
+### Phase 3 — output
+
+**G11. The exported page — DONE.** It was a picture with a clickable legend. It now pans,
+zooms, finds a station, plans a journey, and restores any of that from the URL. Pan and
+zoom are forty lines of arithmetic against the viewBox rather than a library, because the
+file has to open from a USB stick with no network.
+
+One trap worth recording: the page is built inside a template literal, where a lone `\s`
+is quietly eaten. The viewBox regex reached the browser as `/s+/`, split the attribute on
+the letter s, and broke zooming in a way that reads as a maths bug and is an escaping one.
+
+**G12. Export presets and trim marks — DONE.** Poster, banner, wallpaper, shareable page.
+Each is a set of numbers someone would otherwise have to know.
+
+### Phase 4 — composition
+
+**G13. Leader lines — DONE.** Twenty-eight of the example's hundred and fifty-six labels
+lay across a line; now nine do. A second ring, and a hairline from the stop to any label
+pushed out to it. The leader is the point: a label moved out of its own crowd stops
+obviously belonging to anything.
+
+**G14. Fare bands — DONE.** One button stamps every stop inside a band with its zone, and
+bands alternate their wash.
+
+**G15. The history browser — DONE.** In the command palette, not a panel: the thing you
+want twice a week and never want taking up room.
+
+**G16. Starting shapes — DONE.** Grid, radial and ring, trunk and branches. The radial one
+runs diameters rather than four spokes, because four lines all starting in the middle put
+four terminus bullets on the same dot.
+
+**G17. Interchange insets — DONE.** Tied to a station rather than a coordinate, and it
+redraws the map inside itself rather than cloning a picture, so it cannot show a version
+that no longer exists. The export skips id-stamping inside one, because a duplicate id in
+an SVG silently changes what `clipPath` and `use` resolve to in someone else's editor.
+
+**G18. Tidy — DONE, and a reversal.** Part F's "Not built" said whole-network
+auto-beautify was out because octilinear layout is NP-hard and would land near 70%. That
+was the right call about a *solver* and the wrong call about the feature. Hill climbing
+after Stott and Rodgers lands near 70%, takes a fifth of a second on the 156-stop example,
+and is one undo away from never having happened — which turns the argument against it into
+the reason to have it.
+
+Deterministic by construction: fixed order, fixed candidate directions, no randomness
+anywhere, because a layout that shuffles on every run cannot be reviewed or committed.
+Relative position is a hard cost, so it never turns a line inside out to save a few
+degrees — a map where two stops have swapped sides is a different map, not a tidier one.
+
+### What this round did not do
+
+- **Time, as a year slider.** Deliberately not built. The useful version for someone
+  *drawing* a map is phases — "Today", "Proposed extension" — with each station and branch
+  tagged and a dropdown switching what is drawn. Same payoff, no chronology to maintain,
+  and it reuses the `status` field. Waiting on a decision.
+- **Minutes and isochrones.** Dropped. Journeys are priced in stops and changes, and that
+  is what this tool is for.
+- **Touch and mobile** remain untested. Desktop Chromium only, as before.

@@ -87,8 +87,15 @@ time, so they cannot drift out of sync with the graph.
    Y-shaped services are first class. Each branch can run **one way**, carry its own
    **colour**, and note **when it runs**.
 5. **Compose the diagram** — switch to the schematic view and drag stations into shape
-   with four snap types and live guides.
-6. **Export** — SVG, PNG, PDF, an interactive HTML page, or the project file.
+   with four snap types and live guides, or hand a selection to **Tidy** and let it pull
+   the lot onto 45°.
+6. **Export** — SVG, PNG, PDF, an interactive HTML page, or the project file. Four
+   presets cover what maps usually get saved for: a poster at A0 with trim marks, a
+   banner, a wallpaper, and the shareable page.
+
+A new map does not start blank: three starting shapes — **grid city**, **radial and
+ring**, **trunk and branches** — are laid out to the same spacing the example uses, so
+the first thing you do is rename and extend rather than measure.
 
 Along the way: station symbols follow each line's mode, route bullets sit at every
 terminus, labels place themselves around track and each other, and the Terrain tool's
@@ -117,6 +124,42 @@ here". Where every service in the corridor does call, they go back to sharing on
 
 **Rings.** A line whose last stop repeats its first is a closed loop and gets no
 terminus, so the Circle line does not grow a route bullet in its middle.
+
+**Drawing along track that already exists.** <kbd>Shift</kbd>+click a stop while drawing
+and the branch follows the rails to it instead of cutting a straight line over them — a
+line sharing a corridor for twenty stops is one click, not twenty. <kbd>Ctrl</kbd> with
+it makes those stops pass-throughs, which is how an express gets drawn.
+
+**Calling patterns.** A branch's calls can be set as a pattern rather than stop by stop:
+every stop, every other, the others — the Chicago skip-stop pair, which between them
+serve everything and neither serves it all — or copied from another branch, which is the
+one you want most, because the pattern that matters is usually *the same as the service
+before it*. The ends always call; a service cannot terminate somewhere it runs through.
+
+**Which line runs on which side.** Where lines share a corridor, select any station on
+it and **Tracks through here** lists them in the order they are drawn across the track.
+Moving one carries along the whole run the two lines share, not the single segment under
+the cursor — swapping two lines over one segment of twelve draws a crossover in the
+middle of a straight, which is never what anyone meant.
+
+**Overpasses, one at a time.** Click a crossing to give it its own gap, send the other
+line over the top, or turn the break off entirely. <kbd>Shift</kbd>+click adds to the
+selection, and one button applies the settings to every crossing the same two lines make.
+
+**Fare zones.** Draw a zone band and one button stamps every stop inside it, so the zone
+on a station is read off the map rather than typed sixty times. Bands alternate their
+wash, which is how the London map keeps zone 3 from dissolving into zone 4.
+
+**Interchange insets.** A magnified callout of one knot of lines, as the official London
+map carries. It is tied to a station rather than a coordinate, so it follows the place it
+explains, and it redraws the map inside itself rather than cloning a picture — it cannot
+show a version that no longer exists.
+
+**Tidy.** Hill climbing towards the rules a schematic obeys: every edge at a multiple of
+45°, stops evenly spaced, lines carrying straight on through a stop, nothing resting on
+a line it has nothing to do with. Deterministic, so the same map tidies the same way
+every time; and relative position is a hard cost, so it never turns a line inside out to
+save a few degrees. One undoable step, on a selection or the whole diagram.
 
 **Stations carry more than a name.** A second name in another script, a fare zone, a
 status (open, under construction, planned — anything unopened draws hollow and dashed),
@@ -182,6 +225,12 @@ stations, walking links between stations already sharing a line, and suspiciousl
 walks. Issues are graded error / warning / info — most are worth knowing rather than
 fixing.
 
+**The exported page.** One self-contained HTML file with no network access: it pans and
+zooms, finds a station by name, plans a journey across the network, and restores any of
+that from the URL, so a link carries the thing you were looking at. The planner runs over
+(station, line) states rather than stations, because what a passenger pays is changes as
+much as distance.
+
 ## Snapping
 
 Two families of constraint, both treated as full lines rather than points.
@@ -226,9 +275,30 @@ the lot.
 | Arrows, <kbd>Shift</kbd>+arrows | Nudge 1px / 10px |
 | <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the selection — stations, lines, terrain, transfers, screenshots or placements |
 | <kbd>Esc</kbd> | Cancel the current trace, then the selection |
+| <kbd>Shift</kbd>+click a stop *(line tool)* | Follow existing track to it |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click *(line tool)* | Same, running through without calling |
+| <kbd>Shift</kbd>+click a crossing | Add it to the selection |
 
 With the bend tool: click a segment to add a corner, <kbd>Alt</kbd>+click a segment to
 insert a station there, <kbd>Alt</kbd>+click a handle to remove it.
+
+## Checking the drawing
+
+Two suites, both run by `npm test`.
+
+The **domain checks** cover the pure layer — corridor offsets, symbol choice, snapping,
+routing, calling patterns, layout — where a silent wrong answer is hard to see by eye.
+
+The **visual checks** exist because rendering used to have no safety net at all, and four
+of six bugs in one stretch were things a person had to notice in a screenshot. Each case
+is rendered headlessly through the *real* layer components — there is no second drawing
+routine to drift out of step with the first — rasterised, and compared against a committed
+picture. A change that alters the map fails and writes the difference to disk;
+`npm run test:visual -- --update` accepts one you meant.
+
+`/lab` is the same idea for a person: every awkward shape drawn beside what the overlap
+checker measured about it. If the drawing and the verdict ever disagree, the checker is
+wrong and gets fixed first.
 
 ## Architecture
 
@@ -241,7 +311,12 @@ src/
     snapping.ts    the snap engine
     crossings.ts   where one line passes over another, and the bridge it gets
     symbols.ts     which symbol a station gets, including interchange bars
-    labels.ts      collision-avoiding label placement
+    labels.ts      collision-avoiding label placement, leaders included
+    layout.ts      hill-climbing octilinear tidy-up
+    overlaps.ts    does the drawing say what the network means?
+    scenarios.ts   the awkward shapes, as tiny networks
+    templates.ts   the three starting shapes
+    furniture.ts   how big a legend, a title block or an inset is
     validate.ts    the network checker
     csv.ts         CSV import and export
     routing.ts     journey planning across the network
@@ -254,6 +329,9 @@ src/
   render/        one SVG surface for both views, plus its layers
   export/        SVG, PNG, a hand-written PDF writer, and a self-contained HTML page
   ui/            shell (rail, panels, tools), inspector, command palette, hooks
+scripts/
+  render.tsx     the map drawn outside a browser, through the real layer components
+  visual.ts      render, rasterise, compare against a committed picture
 ```
 
 **History is patch-based.** Every mutation goes through `mutate()`, which records
@@ -301,6 +379,9 @@ flat-colour diagram. For a true vector page, export SVG.
 item on the original plan, but manual placement with edge snapping already covers the
 job, and the effort buys less than almost anything else it could be spent on.
 
-Whole-network auto-beautify is also out: octilinear layout is an NP-hard optimisation
-that would land near 70% and leave you fighting the rest. Per-line **Straighten** gives
-most of the value for a fraction of the work.
+Whole-network auto-beautify used to be out, on the grounds that octilinear layout is an
+NP-hard optimisation that would land near 70% and leave you fighting the rest. That was
+the right call about a *solver* and the wrong call about the feature: **Tidy** is in, as
+hill climbing rather than a mixed-integer formulation. It does land near 70%, it takes a
+fifth of a second, and it is one undo away from never having happened — which turns the
+argument against it into the reason to have it.
