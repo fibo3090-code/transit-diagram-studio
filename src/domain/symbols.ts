@@ -14,7 +14,17 @@
  */
 
 import { modeById } from './defaults'
-import { add, dist, mul, norm, perp, rectHitsSegment, sub } from './geometry'
+import {
+  add,
+  closestOnSegment,
+  dist,
+  mul,
+  norm,
+  offsetPolyline,
+  perp,
+  rectHitsSegment,
+  sub,
+} from './geometry'
 import {
   branchGeometry,
   isForward,
@@ -61,7 +71,7 @@ export type SymbolShape =
   | {
       kind: 'perService'
       radius: number
-      marks: { at: Vec2; color: string }[]
+      marks: { at: Vec2; color: string; line: LineId }[]
       /**
        * A thin tie joining the marks, so the group still reads as ONE place.
        *
@@ -188,6 +198,69 @@ function corridorAt(
 }
 
 /**
+ * Every line as it is actually drawn, memoised against the network it came from.
+ *
+ * A mark's position is worked out from corridor offsets, which is right in the middle of
+ * a straight run and wrong wherever the stroke does something else. Where a line turns
+ * at a station, the mitred corner of its offset polyline sits away from the station by
+ * as much as the offset itself; where it merges, its two corridors can put it at
+ * different offsets. Both leave the dot floating beside the track it claims to be on.
+ *
+ * So the last word belongs to the drawing: a mark is snapped onto the nearest point of
+ * the stroke it names. The layout logic still decides which side and which slot, which
+ * is what keeps marks tidy and evenly spread; this only removes the gap.
+ */
+const drawnCache = new WeakMap<Network, Map<Space, Map<LineId, Vec2[][]>>>()
+
+function drawnPaths(project: Project, network: Network, space: Space): Map<LineId, Vec2[][]> {
+  let bySpace = drawnCache.get(network)
+  if (!bySpace) drawnCache.set(network, (bySpace = new Map()))
+  const hit = bySpace.get(space)
+  if (hit) return hit
+
+  const stations = stationMap(project)
+  const out = new Map<LineId, Vec2[][]>()
+  for (const line of project.lines) {
+    if (line.hidden) continue
+    const paths: Vec2[][] = []
+    for (const branch of line.branches) {
+      const g = branchGeometry(project, network, line, branch, space, stations)
+      if (g) paths.push(offsetPolyline(g.points, g.offsets))
+    }
+    if (paths.length > 0) out.set(line.id, paths)
+  }
+  bySpace.set(space, out)
+  return out
+}
+
+/** `at` is relative to the station; the returned point is too. */
+function ontoItsStroke(
+  project: Project,
+  network: Network,
+  space: Space,
+  station: Station,
+  lineId: LineId,
+  at: Vec2,
+): Vec2 {
+  const paths = drawnPaths(project, network, space).get(lineId)
+  if (!paths) return at
+  const from = add(station[space], at)
+  let best: Vec2 | null = null
+  let bestDist = Infinity
+  for (const path of paths) {
+    for (let i = 0; i < path.length - 1; i++) {
+      const q = closestOnSegment(from, path[i], path[i + 1])
+      const d = dist(from, q)
+      if (d < bestDist) {
+        bestDist = d
+        best = q
+      }
+    }
+  }
+  return best ? sub(best, station[space]) : at
+}
+
+/**
  * One mark per calling service, each on the track it uses at this station.
  *
  * Walks every corridor meeting the station rather than only the busiest, so a line
@@ -201,7 +274,7 @@ function serviceMarks(
   station: Station,
   space: Space,
 ): {
-  marks: { at: Vec2; color: string }[]
+  marks: { at: Vec2; color: string; line: LineId }[]
   passing: number
   /** Where the tie has to reach to touch every calling service. */
   reach: { from: Vec2; to: Vec2 } | null
@@ -265,12 +338,25 @@ function serviceMarks(
   const unplaced = [...calling].filter((id) => !placed.has(id))
 
   const order = project.lines.map((l) => l.id)
-  const marks = [...placed.entries()]
-    .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
-    .map(([id, at]) => ({
-      at,
+  const inOrder = [...placed.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+
+  // Snapping a mark onto its stroke fixes a dot floating beside a corner, but where two
+  // strokes converge at the station it can push two dots into one another — and two
+  // marks on top of each other is a worse lie than one slightly off its track. So a snap
+  // is taken only when it keeps its distance; otherwise the laid-out slot stands.
+  const apart = project.style.corridorSpacing * 0.9
+  const taken: Vec2[] = []
+  const marks = inOrder.map(([id, at]) => {
+    const snapped = ontoItsStroke(project, network, space, station, id, at)
+    const clear = taken.every((q) => dist(q, snapped) >= apart)
+    const chosen = clear ? snapped : at
+    taken.push(chosen)
+    return {
+      at: chosen,
       color: project.lines.find((l) => l.id === id)?.color ?? project.style.foreground,
-    }))
+      line: id,
+    }
+  })
 
   let reach: { from: Vec2; to: Vec2 } | null = null
   const pts = marks.map((m) => m.at)

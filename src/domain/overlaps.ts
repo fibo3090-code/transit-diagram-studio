@@ -109,11 +109,14 @@ function marksOf(
   const shape = sym.shape
 
   if (shape.kind === 'perService') {
-    const calling = network.linesAtStation.get(station.id) ?? []
-    return shape.marks.map((m, i) => ({
+    // Each mark names its own line. Pairing marks with the station's calling lines by
+    // position looks equivalent and is not: a service that arrives on a corridor where
+    // everything stops gets no mark of its own, so the two lists fall out of step and
+    // every mark after the gap is checked against the wrong line's track.
+    return shape.marks.map((m) => ({
       at: { x: base.x + m.at.x, y: base.y + m.at.y },
       radius: shape.radius,
-      line: calling[i],
+      line: m.line,
     }))
   }
   if (shape.kind === 'interchange') {

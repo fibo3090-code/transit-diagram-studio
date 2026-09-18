@@ -58,6 +58,11 @@ export function orientation(from: Vec2, to: Vec2): 1 | -1 {
   return to.y - from.y >= 0 ? 1 : -1
 }
 
+/** Where rank `i` of `n` parallel tracks sits, measured from the bundle's own middle. */
+export function rankOffset(i: number, n: number, spacing: number): number {
+  return (i - (n - 1) / 2) * spacing
+}
+
 /**
  * A branch whose last stop repeats its first: a ring.
  *
@@ -208,9 +213,76 @@ export function buildNetwork(project: Project): Network {
     }
 
     corridors.set(key, ordered)
+  }
+
+  // --- where each bundle sits across the track ------------------------------
+  //
+  // Ranks on their own are not enough. Centring every corridor on its own stations means
+  // a bundle that gains a member pushes everybody sideways: where a third line merges in,
+  // the two already running together each shift by half a spacing and come back after the
+  // junction, which draws as a shallow S-bend in lines that are in fact dead straight.
+  //
+  // Real maps hold the lines that were already there and put the newcomer on the outside.
+  // That is what this does: walk the corridors, and where two adjacent ones share lines,
+  // shift the second so the shared lines stay where they were. The shift is snapped to
+  // half a spacing so bundles stay on one lattice, and bounded so a long chain of merges
+  // cannot walk a trunk off its own stations.
+  const bundleShift = new Map<string, number>()
+  {
+    const corridorsAt = new Map<StationId, string[]>()
+    for (const key of corridors.keys()) {
+      const [a, b] = splitSegmentKey(key)
+      for (const id of [a, b]) {
+        const list = corridorsAt.get(id)
+        if (list) list.push(key)
+        else corridorsAt.set(id, [key])
+      }
+    }
+
+    const keys = [...corridors.keys()].sort()
+    const settled = new Set<string>()
+    const limit = spacing * 2
+
+    for (const seed of keys) {
+      if (settled.has(seed)) continue
+      settled.add(seed)
+      bundleShift.set(seed, 0)
+      const queue: string[] = [seed]
+
+      while (queue.length > 0) {
+        const cur = queue.shift()!
+        const curLines = corridors.get(cur)!
+        const curShift = bundleShift.get(cur)!
+        const [a, b] = splitSegmentKey(cur)
+        const near = new Set([...(corridorsAt.get(a) ?? []), ...(corridorsAt.get(b) ?? [])])
+
+        for (const next of [...near].sort()) {
+          if (settled.has(next)) continue
+          const lines = corridors.get(next)!
+          const shared = lines.filter((id) => curLines.includes(id))
+          if (shared.length === 0) continue
+
+          let sum = 0
+          for (const id of shared) {
+            sum +=
+              rankOffset(curLines.indexOf(id), curLines.length, spacing) +
+              curShift -
+              rankOffset(lines.indexOf(id), lines.length, spacing)
+          }
+          const want = sum / shared.length
+          const snapped = Math.round(want / (spacing / 2)) * (spacing / 2)
+          bundleShift.set(next, Math.max(-limit, Math.min(limit, snapped)))
+          settled.add(next)
+          queue.push(next)
+        }
+      }
+    }
+  }
+
+  for (const [key, ordered] of corridors) {
     const m = new Map<LineId, number>()
-    const n = ordered.length
-    ordered.forEach((id, i) => m.set(id, (i - (n - 1) / 2) * spacing))
+    const d = bundleShift.get(key) ?? 0
+    ordered.forEach((id, i) => m.set(id, rankOffset(i, ordered.length, spacing) + d))
     offsets.set(key, m)
   }
 

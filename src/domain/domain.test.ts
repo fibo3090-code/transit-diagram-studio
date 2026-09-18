@@ -231,7 +231,14 @@ check('buildNetwork finds the shared corridor and both interchanges', () => {
 })
 
 check('corridor offsets are symmetric about the centre', () => {
-  const { p, b, c } = sharedCorridorFixture()
+  // A corridor with nothing running into it has no reason to sit anywhere but astride
+  // its own stations, so the two tracks straddle the centreline evenly.
+  const p: Project = createEmptyProject('t')
+  const b = station('B', 100, 0)
+  const c = station('C', 200, 0)
+  p.stations = [b, c]
+  p.style.corridorSpacing = 10
+  p.lines = [line('L1', [[b.id, c.id]], '#C9342B'), line('L2', [[b.id, c.id]], '#1B4F9C')]
   const net = buildNetwork(p)
   const offsets = [...(net.offsets.get(segmentKey(b.id, c.id))?.values() ?? [])]
   expect(offsets.length, 2)
@@ -273,13 +280,47 @@ check('hidden lines release their corridor slot', () => {
 })
 
 check('corridorOrder override changes which line sits on which side', () => {
+  const key0 = (() => {
+    const { p, b, c } = sharedCorridorFixture()
+    const net = buildNetwork(p)
+    const k = segmentKey(b.id, c.id)
+    const m = net.offsets.get(k)!
+    return m.get(p.lines[1].id)! - m.get(p.lines[0].id)!
+  })()
+  assert(key0 > 0, 'by default the second line sits on the positive side')
+
   const { p, b, c } = sharedCorridorFixture()
   const key = segmentKey(b.id, c.id)
   const [l1, l2] = p.lines
   p.corridorOrder[key] = [l2.id, l1.id]
   const net = buildNetwork(p)
-  near(net.offsets.get(key)!.get(l2.id)!, -5, 1e-9, 'overridden first: ')
-  near(net.offsets.get(key)!.get(l1.id)!, 5, 1e-9, 'overridden second: ')
+  const m = net.offsets.get(key)!
+  // The offsets themselves are free to move -- the bundle sits where the lines running
+  // into it are. What the override decides is the ORDER across the corridor.
+  assert(
+    m.get(l2.id)! < m.get(l1.id)!,
+    `the override should put L2 on the other side, got ${m.get(l2.id)} vs ${m.get(l1.id)}`,
+  )
+  near(m.get(l1.id)! - m.get(l2.id)!, 10, 1e-9, 'still one spacing apart: ')
+})
+
+check('a line running through a merge does not move sideways', () => {
+  // L1 runs straight A-B-C-D. L2 joins it for B-C only. The old centred offsets shifted
+  // L1 by half a spacing over B-C and back again, which draws as an S-bend in a line
+  // that is dead straight.
+  const { p, a, b, c, d } = sharedCorridorFixture()
+  const net = buildNetwork(p)
+  const [l1, l2] = p.lines
+  const at = (x: typeof a, y: typeof b) => net.offsets.get(segmentKey(x.id, y.id))!.get(l1.id)!
+  near(at(a, b), at(b, c), 1e-9, 'L1 keeps its side into the merge: ')
+  near(at(b, c), at(c, d), 1e-9, 'and out of it: ')
+  const shared = net.offsets.get(segmentKey(b.id, c.id))!
+  near(
+    Math.abs(shared.get(l2.id)! - shared.get(l1.id)!),
+    10,
+    1e-9,
+    'and the joining line sits one spacing beside it: ',
+  )
 })
 
 check('anti-canonical traversal flips the offset so a line keeps its side', () => {
@@ -623,6 +664,22 @@ check('the shipped map reserves label room for every badge it draws', () => {
     assert(rect.w >= need - 0.01, `${s.name}: reserved ${rect.w} for ${need}`)
   }
   assert(badged > 0, 'the example map should have badged stations to check')
+})
+
+check('no mark on the shipped map floats off the line it names', () => {
+  // The renderer's own fault class: a dot that claims a service stops here while sitting
+  // beside that service's track. Lines that merely CROSS a station they do not serve are
+  // a layout choice and are counted separately -- nothing the renderer does can fix one.
+  const p = createSampleProject()
+  const net = buildNetwork(p)
+  const found = findOverlaps(p, 'schematic', 0.75, net)
+  const rendererFault = found.filter(
+    (o) => o.kind === 'mark-off-its-line' || o.kind === 'marks-collide' || o.alongside,
+  )
+  assert(
+    rendererFault.length === 0,
+    `${rendererFault.length} drawing faults:\n  ${rendererFault.map(describeOverlap).join('\n  ')}`,
+  )
 })
 
 check('a second name hangs below the first, and the box says so', () => {
