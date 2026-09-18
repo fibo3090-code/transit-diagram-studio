@@ -18,6 +18,7 @@ import { add, dist, mul, norm, perp, rectHitsSegment, sub } from './geometry'
 import {
   branchGeometry,
   isForward,
+  orientation,
   segmentKey,
   stationMap,
   type Network,
@@ -173,9 +174,8 @@ function corridorAt(
     return { ...flat(bestCount, shift, spread), passing, offsets: callingOffsets }
   }
 
-  // The offsets are stored in the segment key's canonical direction; if this station
-  // is the far end of the key, the bundle is mirrored as seen from here.
-  const mirrored = station.id > other!
+  // Same geometric convention the strokes use.
+  const mirrored = orientation(station[space], target![space]) < 0
   return {
     dir: norm(sub(target![space], station[space])),
     parallel: bestCount,
@@ -245,9 +245,9 @@ function serviceMarks(
     if (!target || dist(target[space], station[space]) < 1e-6) continue
     const dir = norm(sub(target[space], station[space]))
     const across = perp(dir)
-    // Offsets are stored in the key's canonical direction, which is mirrored when this
-    // station is the far end of it.
-    const mirrored = station.id > n
+    // Which side a positive offset falls on is decided geometrically, exactly as the
+    // stroke decides it. Anything else and the dot sits opposite its own track.
+    const mirrored = orientation(station[space], target[space]) < 0
     const offsets = network.offsets.get(key)
 
     for (const id of inCorridor) {

@@ -40,6 +40,25 @@ export function splitSegmentKey(key: SegmentKey | string): [StationId, StationId
 export const isForward = (a: StationId, b: StationId): boolean => a < b
 
 /**
+ * Which side of a segment a positive offset falls on.
+ *
+ * A corridor's offsets are ranks, and a rank only becomes a position once something
+ * says which way is "up". That used to be the segment key's own direction, which is
+ * `min(id)|max(id)` — decided by generated ids, and therefore arbitrary. Two adjacent
+ * collinear segments could disagree about it, and every line in the bundle jumped to
+ * the other side halfway along: the zigzag you see when a line is drawn as a row of
+ * alternating dog-legs instead of a straight run.
+ *
+ * Tying it to geometry instead makes neighbouring segments of one run agree, whatever
+ * ids they happen to carry. Rightward is positive; for a vertical segment, downward is.
+ */
+export function orientation(from: Vec2, to: Vec2): 1 | -1 {
+  const dx = to.x - from.x
+  if (Math.abs(dx) > 1e-9) return dx > 0 ? 1 : -1
+  return to.y - from.y >= 0 ? 1 : -1
+}
+
+/**
  * A branch whose last stop repeats its first: a ring.
  *
  * Worth naming because a ring has no ends. Treating its join station as a terminus --
@@ -384,61 +403,64 @@ export function branchGeometry(
   const stops = branch.stops.filter((id) => stations.has(id))
   if (stops.length < 2) return null
 
+  // The SAME walk the corridor map was built from.
+  //
+  // These two used to segment the branch differently: corridors were keyed by every
+  // sub-segment a pass-through creates, while the drawing still asked for the long
+  // stop-to-stop key. That key is in no corridor, so every lookup missed and fell back
+  // to offset zero — a rail line drawn straight down the middle of the tram it was
+  // supposed to be running beside. One walk, one segmentation, no way to disagree.
+  const { ids, calls } = branchSequence(branch, stations, space)
+  if (ids.length < 2) return null
+
   const points: Vec2[] = []
   const offsets: number[] = []
   const stopIndices: number[] = []
+  const kept: StationId[] = []
 
-  const served = new Set(stops)
-  const passCandidates = (branch.passes ?? [])
-    .filter((id) => stations.has(id) && !served.has(id))
-    .map((id) => ({ id, at: stations.get(id)![space] }))
+  // Bends belong to the stop-to-stop pair the author drew them on, which may now span
+  // several sub-segments. They are emitted on the first one of that pair.
+  const bendsPending = new Set<string>()
+  for (let i = 1; i < stops.length; i++) bendsPending.add(segmentKey(stops[i - 1], stops[i]))
 
-  const first = stations.get(stops[0])!
-  points.push({ ...first[space] })
+  points.push({ ...stations.get(ids[0])![space] })
   stopIndices.push(0)
-  const kept: StationId[] = [stops[0]]
+  kept.push(ids[0])
 
-  for (let i = 1; i < stops.length; i++) {
-    const a = stops[i - 1]
-    const b = stops[i]
+  /** The stop-to-stop pair a sub-segment belongs to, for finding its bends. */
+  let servedFrom = ids[0]
+
+  for (let i = 1; i < ids.length; i++) {
+    const a = ids[i - 1]
+    const b = ids[i]
     if (a === b) continue
 
-    const key = segmentKey(a, b)
-    const forward = isForward(a, b)
-    const canonical = network.offsets.get(key)?.get(line.id) ?? 0
-    const travel = forward ? canonical : -canonical
-
-    const stored = line.bends[key] ?? []
-    const bends = forward ? stored : [...stored].reverse()
-    for (const bend of bends) {
-      points.push({ ...bend[space] })
-      offsets.push(travel)
-    }
-
-    // Stations this branch runs through without calling. They join the centreline as
-    // ordinary vertices and carry no entry in `stopIndices`, which keeps them out of
-    // the symbol layer while still bending the route through them.
-    //
-    // Each sub-segment takes the offset of the corridor it is actually in, so an
-    // express weaving past a local stays the right distance from it the whole way.
     const from = stations.get(a)![space]
     const to = stations.get(b)![space]
-    let prev = a
-    for (const skipped of passedAlong(from, to, passCandidates)) {
-      const subKey = segmentKey(prev, skipped.id)
-      const subCanonical = network.offsets.get(subKey)?.get(line.id) ?? canonical
-      points.push({ ...skipped.at })
-      offsets.push(isForward(prev, skipped.id) ? subCanonical : -subCanonical)
-      prev = skipped.id
-    }
-    const lastKey = segmentKey(prev, b)
-    const lastCanonical = network.offsets.get(lastKey)?.get(line.id) ?? canonical
-    const lastTravel = isForward(prev, b) ? lastCanonical : -lastCanonical
+    const canonical = network.offsets.get(segmentKey(a, b))?.get(line.id) ?? 0
+    const travel = orientation(from, to) * canonical
 
-    points.push({ ...stations.get(b)![space] })
-    offsets.push(lastTravel)
-    stopIndices.push(points.length - 1)
-    kept.push(b)
+    const servedKey = segmentKey(servedFrom, b)
+    if (bendsPending.has(servedKey)) {
+      bendsPending.delete(servedKey)
+      // Bends are stored in the key's own (id) order, so THIS one still asks about
+      // ids: it is about which end of the stored array comes first, not about which
+      // side of the line an offset falls on.
+      const stored = line.bends[servedKey] ?? []
+      for (const bend of isForward(servedFrom, b) ? stored : [...stored].reverse()) {
+        points.push({ ...bend[space] })
+        offsets.push(travel)
+      }
+    }
+
+    points.push({ ...to })
+    offsets.push(travel)
+
+    if (calls[i]) {
+      stopIndices.push(points.length - 1)
+      kept.push(b)
+      servedFrom = b
+    }
   }
 
   if (points.length < 2) return null
