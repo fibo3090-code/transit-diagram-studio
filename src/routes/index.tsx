@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useState } from 'react'
 
 import { createEmptyProject } from '../domain/defaults'
+import { createFromTemplate, TEMPLATES } from '../domain/templates'
 import { newProjectId } from '../domain/ids'
 import { createSampleProject } from '../domain/sample'
 import type { Project, ProjectId } from '../domain/types'
@@ -156,10 +157,32 @@ function Library() {
           </section>
         )}
 
+        {/*
+          A blank canvas is the worst moment in this tool: everything works and there is
+          nothing to work on. These are the three skeletons real networks are built on,
+          laid out to the same spacing the example uses, so the first thing you do is
+          rename and extend rather than measure.
+        */}
+        <div className="mb-4 grid gap-2 sm:grid-cols-3">
+          {TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              disabled={busy}
+              onClick={() => create(createFromTemplate(t.id))}
+              className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-slate-900 disabled:opacity-50"
+            >
+              <span className="block text-[13px] font-semibold text-slate-900">{t.name}</span>
+              <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">
+                {t.hint}
+              </span>
+            </button>
+          ))}
+        </div>
+
         <div className="mb-8 flex flex-wrap gap-2">
           <Button variant="primary" size="md" disabled={busy} onClick={() => create(createEmptyProject())}>
             <IconPlus size={15} />
-            New map
+            Blank map
           </Button>
           <Button size="md" disabled={busy} onClick={importFile}>
             Open a project file

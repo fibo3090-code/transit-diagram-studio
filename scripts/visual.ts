@@ -23,6 +23,7 @@ import { PNG } from 'pngjs'
 
 import { createSampleProject } from '../src/domain/sample'
 import { scenarios } from '../src/domain/scenarios'
+import { createFromTemplate, TEMPLATES } from '../src/domain/templates'
 import type { Project } from '../src/domain/types'
 import { renderProjectSvg } from './render'
 
@@ -44,6 +45,9 @@ interface Case {
 
 function cases(): Case[] {
   const out: Case[] = scenarios().map((s) => ({ name: s.id, project: s.project, width: 640 }))
+  for (const t of TEMPLATES) {
+    out.push({ name: `template-${t.id}`, project: createFromTemplate(t.id), width: 760 })
+  }
   out.push({ name: 'example-network', project: createSampleProject(), width: 2200 })
   return out
 }

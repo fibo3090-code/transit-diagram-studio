@@ -25,6 +25,7 @@ import { newBranchId, newLineId, newStationId } from './ids'
 import { normalizeProject } from './migrate'
 import { createSampleProject } from './sample'
 import { scenarios } from './scenarios'
+import { createFromTemplate, TEMPLATES } from './templates'
 import { describeOverlap, findOverlaps } from './overlaps'
 import { contentBounds } from '../export/exporters'
 import {
@@ -1876,6 +1877,35 @@ check('a point inside a band is inside, and a hole in it is not', () => {
   ]
   assert(!pointInShape({ x: 50, y: 50 }, square, [hole]), 'an island is not the lake')
   assert(pointInShape({ x: 20, y: 20 }, square, [hole]), 'but the water around it is')
+})
+
+check('every starter template builds a network the rest of the app accepts', () => {
+  for (const t of TEMPLATES) {
+    const p = createFromTemplate(t.id)
+    const net = buildNetwork(p)
+    assert(p.stations.length > 0, `${t.id} has stations`)
+    assert(p.lines.length > 0, `${t.id} has lines`)
+    expect(net.orphans.size, 0, `${t.id} leaves no stop off a line: `)
+    assert(net.interchanges.size > 0, `${t.id} has somewhere to change`)
+
+    // Nothing the checker calls the renderer's fault -- a template that ships with a
+    // drawing fault teaches the fault.
+    const faults = findOverlaps(p).filter(
+      (o) => o.kind === 'mark-off-its-line' || o.kind === 'marks-collide' || o.alongside,
+    )
+    assert(faults.length === 0, `${t.id}: ${faults.map(describeOverlap).join('; ')}`)
+
+    // And every line draws.
+    const stations = stationMap(p)
+    for (const l of p.lines) {
+      for (const b of l.branches) {
+        assert(
+          branchGeometry(p, net, l, b, 'schematic', stations) !== null,
+          `${t.id}: ${l.name} draws`,
+        )
+      }
+    }
+  }
 })
 
 // ---------------------------------------------------------------------------
