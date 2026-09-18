@@ -25,7 +25,7 @@ import { networkOf, useEditor, type Tool } from '../store/editor-store'
 import { contentBounds } from '../export/exporters'
 import { BUILTIN_BADGES, useBlobUrls } from '../render/layers'
 import {
-  FloatingTools,
+  ToolDock,
   MODES,
   MenuItem,
   OverflowMenu,
@@ -127,7 +127,7 @@ export function ToolPalette() {
   const activeSnaps = SNAPS.filter((s) => project.snap[s.id]).length
 
   return (
-    <FloatingTools>
+    <ToolDock>
       {TOOLS.map((t, i) => (
         <ToolTile
           key={t.id}
@@ -173,7 +173,7 @@ export function ToolPalette() {
           </div>
         )}
       </div>
-    </FloatingTools>
+    </ToolDock>
   )
 }
 

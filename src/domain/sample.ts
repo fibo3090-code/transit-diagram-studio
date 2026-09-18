@@ -372,7 +372,7 @@ const TERRAIN: (Omit<Terrain, 'id'> & { kind: TerrainKind })[] = [
 
 const PLACEMENTS: Omit<Placement, 'id'>[] = [
   {"what": {"kind": "legend"}, "geo": {"x": 2600, "y": 700}, "schematic": {"x": 2600, "y": 700}, "scale": 1, "angle": 0, "opacity": 1, "locked": false, "hidden": false, "label": "Lines"},
-  {"what": {"kind": "titleBlock"}, "geo": {"x": 400, "y": 40}, "schematic": {"x": 400, "y": 40}, "scale": 1, "angle": 0, "opacity": 1, "locked": false, "hidden": false, "label": "Aldbury"},
+  {"what": {"kind": "titleBlock"}, "geo": {"x": 205, "y": 36}, "schematic": {"x": 205, "y": 36}, "scale": 1, "angle": 0, "opacity": 1, "locked": false, "hidden": false, "label": "Aldbury"},
   {"what": {"kind": "northArrow"}, "geo": {"x": 2600, "y": 120}, "schematic": {"x": 2600, "y": 120}, "scale": 1, "angle": 0, "opacity": 1, "locked": false, "hidden": false},
   {"what": {"kind": "scaleBar"}, "geo": {"x": 2600, "y": 250}, "schematic": {"x": 2600, "y": 250}, "scale": 1, "angle": 0, "opacity": 1, "locked": false, "hidden": false, "label": "2 km"},
 ]

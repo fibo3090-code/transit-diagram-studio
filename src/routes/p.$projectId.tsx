@@ -134,17 +134,21 @@ function Editor() {
           <Browser mode={mode} />
         </ResizablePanel>
 
-        <div className="relative flex min-w-0 flex-1 flex-col">
-          <MapView />
-          <ToolPalette />
-          <CanvasEmptyState onImport={importImages} />
-          <Coach
-            visible={coachOn}
-            onDismiss={() => {
-              dismissCoach()
-              setCoachOn(false)
-            }}
-          />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1">
+            <ToolPalette />
+            <div className="relative min-w-0 flex-1">
+              <MapView />
+              <CanvasEmptyState onImport={importImages} />
+              <Coach
+                visible={coachOn}
+                onDismiss={() => {
+                  dismissCoach()
+                  setCoachOn(false)
+                }}
+              />
+            </div>
+          </div>
           <StatusBar onSearch={() => setPalette(true)} />
         </div>
 

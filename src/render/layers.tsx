@@ -19,7 +19,14 @@ import {
   polylinePath,
   dist,
 } from '../domain/geometry'
-import { badgeCenters, BADGE_DIAMETER, estimateTextWidth, placeLabels } from '../domain/labels'
+import {
+  badgeCenters,
+  badgeStripWidth,
+  BADGE_DIAMETER,
+  estimateTextWidth,
+  placeLabels,
+  ZONE_LEAD,
+} from '../domain/labels'
 import {
   branchGeometry,
   segmentKey,
@@ -932,6 +939,12 @@ export function LabelsLayer({
         // The badges ride the name's baseline, not the anchor point above it.
         const badgeY = y + dy - fontSize * 0.32
         const centers = badgeCenters(badges.length, fontSize)
+        // The zone chip follows the badges, at the far end of everything.
+        const badgeStrip = badgeStripWidth(badges.length, fontSize)
+        const zoneW = Math.max(
+          fontSize * 0.62,
+          fontSize * 0.72 * 0.58 * (s.zone?.length ?? 0),
+        )
 
         return (
           <g key={s.id} transform={s.label.angle ? `rotate(${s.label.angle} ${x} ${y})` : undefined}>
@@ -990,19 +1003,34 @@ export function LabelsLayer({
             )}
 
             {s.zone && project.view.showZones && (
-              <text
-                x={x}
-                y={y}
-                dy={dy - fontSize * 0.95}
-                textAnchor={textAnchor}
-                fontSize={fontSize * 0.7}
-                fontFamily={fontFamily}
-                fill={foreground}
-                opacity={0.5}
+              <g
+                transform={`translate(${badgeX + badgeDir * (badgeStrip + fontSize * ZONE_LEAD)} ${badgeY})`}
                 pointerEvents="none"
               >
-                {s.zone}
-              </text>
+                <rect
+                  x={badgeDir > 0 ? 0 : -zoneW}
+                  y={-fontSize * 0.44}
+                  width={zoneW}
+                  height={fontSize * 0.88}
+                  rx={fontSize * 0.22}
+                  fill="none"
+                  stroke={foreground}
+                  strokeWidth={Math.max(0.6, fontSize * 0.055)}
+                  opacity={0.42}
+                />
+                <text
+                  x={badgeDir > 0 ? zoneW / 2 : -zoneW / 2}
+                  y={0}
+                  dy="0.33em"
+                  textAnchor="middle"
+                  fontSize={fontSize * 0.72}
+                  fontFamily={fontFamily}
+                  fill={foreground}
+                  opacity={0.62}
+                >
+                  {s.zone}
+                </text>
+              </g>
             )}
           </g>
         )

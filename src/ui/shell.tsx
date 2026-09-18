@@ -272,12 +272,18 @@ export function ResizablePanel({
  * marking pass-through stops are three more tools that a labelled horizontal row
  * could not have absorbed.
  */
-export function FloatingTools({ children }: { children: React.ReactNode }) {
+/**
+ * The tool column, down the near edge of the canvas.
+ *
+ * It used to float over the drawing. That reads well in a mockup and badly in use: it
+ * parks itself on top of whatever happens to be in the top-left of the map and never
+ * moves, so part of the diagram is permanently behind it and no amount of panning
+ * helps. A gutter costs forty-eight pixels once and hides nothing, ever.
+ */
+export function ToolDock({ children }: { children: React.ReactNode }) {
   return (
-    <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-col gap-1">
-      <div className="pointer-events-auto flex flex-col gap-0.5 rounded-2xl border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur">
-        {children}
-      </div>
+    <div className="flex w-12 flex-none flex-col items-center gap-0.5 border-r border-slate-200 bg-slate-50/80 py-2">
+      {children}
     </div>
   )
 }

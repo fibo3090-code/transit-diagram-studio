@@ -10,6 +10,7 @@
  */
 
 import { modeById } from './defaults'
+import { placementDrawnExtent } from './furniture'
 import { dist, offsetPolyline, rectHitsSegment } from './geometry'
 import { branchGeometry, stationMap, type Network, type Space } from './network'
 import { lineBadges } from './symbols'
@@ -72,6 +73,22 @@ export function badgeCenters(count: number, fontSize: number): number[] {
   return out
 }
 
+/**
+ * The fare-zone chip that follows a label.
+ *
+ * It used to be drawn as a bare number floating above the name, which reads as a stray
+ * digit rather than as information about that station — on a busy map it looks like
+ * rendering debris, and it collided with whatever label sat above. On the line, in a box,
+ * after the name, it is unmistakably part of the label.
+ */
+export const ZONE_LEAD = 0.34
+
+export function zoneChipWidth(zone: string | undefined, fontSize: number): number {
+  if (!zone) return 0
+  const text = fontSize * 0.72 * 0.58 * zone.length
+  return fontSize * ZONE_LEAD + Math.max(fontSize * 0.62, text) + fontSize * 0.34
+}
+
 /** How much width the badge strip adds beyond the end of the name. */
 export function badgeStripWidth(count: number, fontSize: number): number {
   if (count <= 0) return 0
@@ -126,8 +143,10 @@ export function labelRect(
 /** Everything a label draws around its name, as the box-growing numbers above want it. */
 export function labelExtras(project: Project, station: Station): { width: number; height: number } {
   const fs = project.style.fontSize
+  const badges = project.view.showBadges ? badgeStripWidth(station.badges.length, fs) : 0
+  const zone = project.view.showZones ? zoneChipWidth(station.zone, fs) : 0
   return {
-    width: project.view.showBadges ? badgeStripWidth(station.badges.length, fs) : 0,
+    width: badges + zone,
     height: station.nameSecondary ? fs * project.style.secondaryNameScale * 1.15 : 0,
   }
 }
@@ -182,6 +201,18 @@ export function placeLabels(
       const w = Math.max(bfs * 1.5, b.text.length * bfs * 0.62) + bfs * 0.7
       const h = bfs * 1.7
       taken.push({ x: b.at.x - w / 2, y: b.at.y - h / 2, w, h })
+    }
+  }
+
+  // So is the furniture. A legend or a title block is opaque and is drawn last, so a
+  // label that lands under one is simply gone — and nothing about that is visible while
+  // composing, only in the finished file.
+  if (project.view.showPlacements) {
+    for (const pl of project.placements) {
+      if (pl.hidden) continue
+      const { w, h } = placementDrawnExtent(project, pl)
+      if (w <= 0 || h <= 0) continue
+      taken.push({ x: pl[space].x - w / 2, y: pl[space].y - h / 2, w, h })
     }
   }
 
