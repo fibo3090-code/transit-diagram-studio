@@ -138,7 +138,8 @@ function Editor() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
             <ToolPalette />
-            <div className="relative min-w-0 flex-1">
+            {/* A flex column, because the surface stretches with `flex-1`. */}
+            <div className="relative flex min-w-0 flex-1 flex-col">
               <MapView />
               <CanvasEmptyState onImport={importImages} />
               <Coach
