@@ -29,9 +29,12 @@ import {
   segmentKey,
   type Network,
   type Space,
+  applyCallingMask,
+  stationMap,
   swapAcrossRun,
+  type CallingMask,
 } from '../domain/network'
-import { findRoute, type Route } from '../domain/routing'
+import { findRoute, trackPath, type Route } from '../domain/routing'
 import type {
   Asset,
   AssetId,
@@ -225,6 +228,18 @@ interface EditorState {
   addBranch: (lineId: LineId, fromStop?: StationId, name?: string) => string | null
   deleteBranch: (lineId: LineId, branchId: string) => void
   appendStop: (lineId: LineId, branchId: string, stationId: StationId) => void
+  /**
+   * Extend a branch to a distant station along existing track. Returns false when there
+   * is no track between the two, so the caller can fall back to a plain straight hop.
+   */
+  followTrack: (
+    lineId: LineId,
+    branchId: string,
+    to: StationId,
+    calling?: boolean,
+  ) => boolean
+  /** Rewrite a branch's calls from a pattern rather than stop by stop. */
+  setCallingPattern: (lineId: LineId, branchId: string, mask: CallingMask) => void
   insertStop: (lineId: LineId, branchId: string, index: number, stationId: StationId) => void
   removeStop: (lineId: LineId, branchId: string, index: number) => void
   /** Direction, colour, service label -- anything on a branch but its stop list. */
@@ -753,6 +768,60 @@ export const useEditor = create<EditorState>((set, get) => {
         if (b.stops[b.stops.length - 1] === stationId) return // no self-loop segments
         b.stops.push(stationId)
       }),
+
+    /**
+     * Extend a branch to a station some way off, following track that is already there.
+     *
+     * Drawing a line that shares a corridor used to mean clicking every single stop
+     * along it, and getting one wrong put a kink in a straight run. The rails between
+     * two points are known; this walks them.
+     *
+     * `calling: false` is the express case — the stations in between are woven into the
+     * geometry as pass-throughs, so the new line follows the local alignment without
+     * stopping, which is exactly what `Branch.passes` is for.
+     */
+    followTrack: (lineId, branchId, to, calling = true) => {
+      const project = get().project
+      if (!project) return false
+      const branch = project.lines
+        .find((l) => l.id === lineId)
+        ?.branches.find((b) => b.id === branchId)
+      const from = branch?.stops[branch.stops.length - 1]
+      if (!from || from === to) return false
+
+      const network = networkOf(project)
+      const path = trackPath(network, stationMap(project), from, to, get().space)
+      if (!path || path.length < 2) return false
+
+      const middle = path.slice(1, -1)
+      get().mutate(calling ? 'Follow the track' : 'Run through', (d) => {
+        const b = findBranch(d, lineId, branchId)
+        if (!b) return
+        for (const id of middle) {
+          if (calling) b.stops.push(id)
+          else if (!b.passes.includes(id)) b.passes.push(id)
+        }
+        if (b.stops[b.stops.length - 1] !== to) b.stops.push(to)
+      })
+      return true
+    },
+
+    setCallingPattern: (lineId, branchId, mask) => {
+      const project = get().project
+      if (!project) return
+      const branch = project.lines
+        .find((l) => l.id === lineId)
+        ?.branches.find((b) => b.id === branchId)
+      if (!branch) return
+      const next = applyCallingMask(branch, stationMap(project), mask, get().space)
+      if (!next) return
+      get().mutate('Set the calling pattern', (d) => {
+        const b = findBranch(d, lineId, branchId)
+        if (!b) return
+        b.stops = next.stops
+        b.passes = next.passes
+      })
+    },
 
     insertStop: (lineId, branchId, index, stationId) =>
       get().mutate('Insert stop', (d) => {

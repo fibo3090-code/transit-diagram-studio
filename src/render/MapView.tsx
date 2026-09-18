@@ -108,6 +108,7 @@ export function MapView() {
   const setViewport = useEditor((s) => s.setViewport)
   const addStation = useEditor((s) => s.addStation)
   const appendStop = useEditor((s) => s.appendStop)
+  const followTrack = useEditor((s) => s.followTrack)
   const select = useEditor((s) => s.select)
   const clearSelection = useEditor((s) => s.clearSelection)
   const mutate = useEditor((s) => s.mutate)
@@ -363,6 +364,14 @@ export function MapView() {
     }
 
     if (tool === 'line' && activeLineId && activeBranchId) {
+      // Shift skips ahead along track that already exists rather than drawing a straight
+      // hop over it — the difference between describing a service and re-clicking the
+      // twenty stops it shares with the line beside it. Ctrl (or Cmd) with it makes
+      // those stops pass-throughs, which is how an express gets drawn.
+      if (e.shiftKey) {
+        const ran = followTrack(activeLineId, activeBranchId, id, !(e.ctrlKey || e.metaKey))
+        if (ran) return
+      }
       appendStop(activeLineId, activeBranchId, id)
       return
     }

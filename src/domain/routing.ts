@@ -12,7 +12,7 @@
  */
 
 import { allStopsOfLine, type Network } from './network'
-import type { LineId, Project, StationId } from './types'
+import type { LineId, Project, StationId, Vec2 } from './types'
 
 export interface RoutingCosts {
   /** Per stop travelled. */
@@ -241,4 +241,66 @@ export function directLines(
     if (stops.has(from) && stops.has(to)) out.push(l.id)
   }
   return out
+}
+
+/**
+ * The shortest way from one station to another over track that already exists.
+ *
+ * Different question from `findRoute`, and deliberately so. A journey is priced in
+ * changes, because a passenger cares about them; this is about the rails, and a line
+ * being drawn along them does not care whose rails they are. Weighted by distance on the
+ * diagram, so where two ways round exist it takes the one a line would plausibly follow.
+ *
+ * Returns the stations in order, both ends included, or null if there is no track
+ * between them.
+ */
+export function trackPath(
+  network: Network,
+  positions: Map<StationId, { schematic: Vec2; geo: Vec2 }>,
+  from: StationId,
+  to: StationId,
+  space: 'geo' | 'schematic' = 'schematic',
+): StationId[] | null {
+  if (from === to) return [from]
+  const at = (id: StationId) => positions.get(id)?.[space]
+  const start = at(from)
+  if (!start || !at(to)) return null
+
+  const best = new Map<StationId, number>([[from, 0]])
+  const prev = new Map<StationId, StationId>()
+  const queue: StationId[] = [from]
+
+  while (queue.length > 0) {
+    // Small graphs and a panel-sized operation: a linear scan for the cheapest open
+    // node costs nothing worth a heap.
+    let pick = 0
+    for (let i = 1; i < queue.length; i++) {
+      if ((best.get(queue[i]) ?? Infinity) < (best.get(queue[pick]) ?? Infinity)) pick = i
+    }
+    const cur = queue.splice(pick, 1)[0]
+    if (cur === to) break
+    const here = at(cur)
+    if (!here) continue
+
+    for (const next of network.neighbours.get(cur) ?? []) {
+      const there = at(next)
+      if (!there) continue
+      const cost = (best.get(cur) ?? 0) + Math.hypot(there.x - here.x, there.y - here.y)
+      if (cost >= (best.get(next) ?? Infinity)) continue
+      best.set(next, cost)
+      prev.set(next, cur)
+      if (!queue.includes(next)) queue.push(next)
+    }
+  }
+
+  if (!best.has(to)) return null
+  const out: StationId[] = [to]
+  let cur = to
+  while (cur !== from) {
+    const p = prev.get(cur)
+    if (!p) return null
+    out.push(p)
+    cur = p
+  }
+  return out.reverse()
 }

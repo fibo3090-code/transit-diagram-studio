@@ -254,6 +254,14 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: 'Drawing a line',
+    rows: [
+      ['Click a stop', 'Add it to the end of the branch'],
+      ['Shift+click a stop', 'Skip ahead along track that already exists'],
+      ['Ctrl+Shift+click', 'Same, but run through those stops without calling'],
+    ],
+  },
+  {
     title: 'Editing',
     rows: [
       ['Alt (hold)', 'Suspend snapping mid-drag'],

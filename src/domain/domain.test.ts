@@ -45,9 +45,10 @@ import {
   segmentKey,
   sharedRun,
   swapAcrossRun,
+  applyCallingMask,
 } from './network'
 import { findCrossings } from './crossings'
-import { findRoute } from './routing'
+import { findRoute, trackPath } from './routing'
 import { newTransferId } from './ids'
 import { snapPoint } from './snapping'
 import { lineBadges, stationLevels, stationSymbol } from './symbols'
@@ -1765,6 +1766,80 @@ check('a station on one segment is not dragged into another', () => {
     !g.points.some((q) => q.x === 100 && q.y === 200),
     'and never onto the vertical leg it merely projects onto',
   )
+})
+
+check('following existing track walks the rails between two stops', () => {
+  const p: Project = createEmptyProject('t')
+  const a = station('A', 0, 0)
+  const b = station('B', 100, 0)
+  const c = station('C', 200, 0)
+  const d = station('D', 300, 0)
+  const far = station('Far', 1000, 1000)
+  p.stations = [a, b, c, d, far]
+  p.lines = [line('L1', [[a.id, b.id, c.id, d.id]], '#C9342B')]
+  const net = buildNetwork(p)
+  const pos = stationMap(p)
+
+  const path = trackPath(net, pos, a.id, d.id)!
+  expect(path.length, 4, 'A B C D: ')
+  expect(path[1], b.id)
+  expect(path[2], c.id)
+
+  // No rails, no path -- the caller falls back to a straight hop.
+  expect(trackPath(net, pos, a.id, far.id), null, 'nothing reaches Far: ')
+  expect(trackPath(net, pos, a.id, a.id)!.length, 1, 'a stop reaches itself: ')
+})
+
+check('the shortest rails win when there are two ways round', () => {
+  const p: Project = createEmptyProject('t')
+  const a = station('A', 0, 0)
+  const b = station('B', 100, 0)
+  const c = station('C', 200, 0)
+  const long1 = station('L1', 100, 400)
+  const long2 = station('L2', 200, 400)
+  p.stations = [a, b, c, long1, long2]
+  p.lines = [
+    line('Direct', [[a.id, b.id, c.id]], '#C9342B'),
+    line('Roundabout', [[a.id, long1.id, long2.id, c.id]], '#1B4F9C'),
+  ]
+  const net = buildNetwork(p)
+  const path = trackPath(net, stationMap(p), a.id, c.id)!
+  expect(path.length, 3, 'straight through B: ')
+  expect(path[1], b.id)
+})
+
+check('a calling pattern rewrites a branch without losing its ends', () => {
+  const p: Project = createEmptyProject('t')
+  const ids = [0, 1, 2, 3, 4, 5].map((i) => station(`S${i}`, i * 100, 0))
+  p.stations = ids
+  const l = line('L', [ids.map((s) => s.id)], '#C9342B')
+  p.lines = [l]
+  const stations = stationMap(p)
+  const branch = l.branches[0]
+
+  const a = applyCallingMask(branch, stations, 'alternate-a')!
+  const b = applyCallingMask(branch, stations, 'alternate-b')!
+
+  for (const out of [a, b]) {
+    expect(out.stops[0], ids[0].id, 'the first stop still calls: ')
+    expect(out.stops[out.stops.length - 1], ids[5].id, 'and the last: ')
+    for (const id of out.passes) assert(!out.stops.includes(id), 'never both at once')
+  }
+
+  // Between them, the pair serves everything.
+  const covered = new Set([...a.stops, ...b.stops])
+  expect(covered.size, 6, 'the skip-stop pair covers the line: ')
+  assert(a.passes.length > 0 && b.passes.length > 0, 'and each skips something')
+
+  // An explicit list is honoured, ends excepted.
+  const only = applyCallingMask(branch, stations, { calls: [ids[2].id] })!
+  expect(only.stops.length, 3, 'S0, S2, S5: ')
+  expect(only.passes.length, 3)
+
+  // Back to all stops, and nothing is left behind.
+  const all = applyCallingMask({ ...branch, stops: only.stops, passes: only.passes }, stations, 'all')!
+  expect(all.stops.length, 6, 'every stop calls again: ')
+  expect(all.passes.length, 0)
 })
 
 // ---------------------------------------------------------------------------

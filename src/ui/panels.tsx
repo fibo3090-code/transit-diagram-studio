@@ -2019,6 +2019,13 @@ function MultiStationInspector({ ids }: { ids: StationId[] }) {
   )
 }
 
+/**
+ * The calling pattern of the last branch copied, kept outside React so it survives the
+ * inspector being torn down and rebuilt — which is the whole point: the useful paste is
+ * onto a DIFFERENT line.
+ */
+let copiedCalls: { name: string; calls: StationId[] } | null = null
+
 function LineInspector({ line }: { line: Line }) {
   const project = useEditor((s) => s.project)!
   const updateLine = useEditor((s) => s.updateLine)
@@ -2031,6 +2038,8 @@ function LineInspector({ line }: { line: Line }) {
   const removeStop = useEditor((s) => s.removeStop)
   const updateBranch = useEditor((s) => s.updateBranch)
   const setStopCalls = useEditor((s) => s.setStopCalls)
+  const setCallingPattern = useEditor((s) => s.setCallingPattern)
+  const [, bumpClipboard] = useState(0)
   const setActiveLine = useEditor((s) => s.setActiveLine)
   const setTool = useEditor((s) => s.setTool)
   const select = useEditor((s) => s.select)
@@ -2199,6 +2208,53 @@ function LineInspector({ line }: { line: Line }) {
                   </li>
                 ))}
               </ol>
+            )}
+
+            {b.stops.length > 2 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-dashed border-slate-200 pt-1.5">
+                <span className="mr-0.5 text-[11px] text-slate-500">Calls at</span>
+                <button
+                  onClick={() => setCallingPattern(line.id, b.id, 'all')}
+                  className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                >
+                  every stop
+                </button>
+                <button
+                  onClick={() => setCallingPattern(line.id, b.id, 'alternate-a')}
+                  title="Chicago skip-stop: this one and its partner between them serve everything"
+                  className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                >
+                  every other
+                </button>
+                <button
+                  onClick={() => setCallingPattern(line.id, b.id, 'alternate-b')}
+                  title="The other half of the skip-stop pair"
+                  className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                >
+                  the others
+                </button>
+                <span className="mx-0.5 text-slate-300">|</span>
+                <button
+                  onClick={() => {
+                    copiedCalls = { name: b.name || line.name, calls: [...b.stops] }
+                    bumpClipboard((n) => n + 1)
+                  }}
+                  className="rounded px-1 text-[11px] text-slate-500 underline hover:text-slate-900"
+                >
+                  copy
+                </button>
+                {copiedCalls && (
+                  <button
+                    onClick={() =>
+                      setCallingPattern(line.id, b.id, { calls: copiedCalls!.calls })
+                    }
+                    title={`Call at the same stops as ${copiedCalls.name}`}
+                    className="rounded px-1 text-[11px] text-slate-500 underline hover:text-slate-900"
+                  >
+                    paste from {copiedCalls.name}
+                  </button>
+                )}
+              </div>
             )}
 
             {b.passes.length > 0 && (

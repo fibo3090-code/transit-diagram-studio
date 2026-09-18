@@ -661,3 +661,55 @@ export function swapAcrossRun(
   }
   return out
 }
+
+/**
+ * Which stops a branch calls at, expressed as a pattern rather than a list.
+ *
+ * Real networks describe services this way — all-stops, every other one, the same
+ * pattern as the service before it — and the alternative is clicking through forty
+ * stations twice and getting one wrong. `alternate-a` and `alternate-b` are the Chicago
+ * skip-stop pair: between them they serve everything, and neither serves it all.
+ *
+ * Ends always call. A service cannot terminate somewhere it runs through.
+ */
+export type CallingMask =
+  | 'all'
+  | 'alternate-a'
+  | 'alternate-b'
+  | { calls: StationId[] }
+
+export function applyCallingMask(
+  branch: Branch,
+  stations: Map<StationId, Station>,
+  mask: CallingMask,
+  space: Space = 'schematic',
+): { stops: StationId[]; passes: StationId[] } | null {
+  const { ids } = branchSequence(branch, stations, space)
+  if (ids.length < 2) return null
+
+  const wanted = typeof mask === 'object' ? new Set(mask.calls) : null
+  const stops: StationId[] = []
+  const passes: StationId[] = []
+
+  ids.forEach((id, i) => {
+    const end = i === 0 || i === ids.length - 1
+    const calls =
+      end ||
+      (mask === 'all'
+        ? true
+        : mask === 'alternate-a'
+          ? i % 2 === 0
+          : mask === 'alternate-b'
+            ? i % 2 === 1
+            : wanted!.has(id))
+    if (calls) {
+      if (stops[stops.length - 1] !== id) stops.push(id)
+    } else if (!passes.includes(id)) {
+      passes.push(id)
+    }
+  })
+
+  if (stops.length < 2) return null
+  // A station cannot be both; a call anywhere on the run wins.
+  return { stops, passes: passes.filter((id) => !stops.includes(id)) }
+}
