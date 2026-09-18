@@ -186,7 +186,7 @@ export function MapView() {
   useEffect(() => {
     const fit = (target: 'all' | 'selection') => {
       if (!project) return
-      let b = contentBounds(project, space, 40)
+      let b = contentBounds(project, space, 40, network ?? undefined)
       if (target === 'selection' && selection.stations.length > 0) {
         const pts = project.stations
           .filter((s) => selection.stations.includes(s.id))

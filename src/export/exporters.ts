@@ -9,7 +9,8 @@
 import { boundsSize, boundsValid, emptyBounds, growBounds, padBounds, type Bounds } from '../domain/geometry'
 import { placementDrawnExtent } from '../domain/furniture'
 import { modeById } from '../domain/defaults'
-import type { Space } from '../domain/network'
+import { buildNetwork, type Network, type Space } from '../domain/network'
+import { labelRects } from '../domain/labels'
 import type { Project } from '../domain/types'
 
 /** Layers that exist only to help you edit, and must never reach a poster. */
@@ -35,9 +36,23 @@ export const defaultExportOptions = (space: Space): ExportOptions => ({
 // Bounds
 // ---------------------------------------------------------------------------
 
-export function contentBounds(project: Project, space: Space, padding: number): Bounds {
+export function contentBounds(
+  project: Project,
+  space: Space,
+  padding: number,
+  network?: Network,
+): Bounds {
   const b = emptyBounds()
   for (const s of project.stations) growBounds(b, s[space])
+  // Names are content. The page has to be big enough for the lettering, not just for
+  // the dots — otherwise the outermost label is sliced in half by the edge of the file.
+  if (project.view.showLabels) {
+    const net = network ?? buildNetwork(project)
+    for (const r of labelRects(project, net, space)) {
+      growBounds(b, { x: r.x, y: r.y })
+      growBounds(b, { x: r.x + r.w, y: r.y + r.h })
+    }
+  }
   for (const t of project.terrain) for (const p of t[space]) growBounds(b, p)
   for (const line of project.lines) {
     for (const list of Object.values(line.bends)) {

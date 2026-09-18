@@ -25,7 +25,16 @@ import { createSampleProject } from './sample'
 import { scenarios } from './scenarios'
 import { describeOverlap, findOverlaps } from './overlaps'
 import { contentBounds } from '../export/exporters'
-import { placeLabels } from './labels'
+import {
+  badgeCenters,
+  badgeStripWidth,
+  BADGE_DIAMETER,
+  estimateTextWidth,
+  labelExtras,
+  labelRect,
+  labelRects,
+  placeLabels,
+} from './labels'
 import { applyCsv, parseCsv } from './csv'
 import {
   branchGeometry,
@@ -549,6 +558,93 @@ check('labels avoid sitting on the track', () => {
       anchor === 'se' || anchor === 'sw',
     `a mid-corridor label should move off the track, got ${anchor}`,
   )
+})
+
+check('badges are drawn clear of the name, and room is reserved for them', () => {
+  const fontSize = 13
+  // The first badge has to start after the last letter, not on top of the first one.
+  // This was the bug: every badged station printed its icons over its own name.
+  const first = badgeCenters(3, fontSize)[0] - (fontSize * BADGE_DIAMETER) / 2
+  assert(first > 0, `the badge strip must start clear of the text, got ${first}`)
+
+  const centers = badgeCenters(3, fontSize)
+  for (let i = 1; i < centers.length; i++) {
+    assert(
+      centers[i] - centers[i - 1] >= fontSize * BADGE_DIAMETER,
+      'badges must not be drawn on top of each other',
+    )
+  }
+
+  // And the strip is as wide as the placer thinks it is.
+  const drawn = centers[centers.length - 1] + (fontSize * BADGE_DIAMETER) / 2
+  expect(Math.round(badgeStripWidth(3, fontSize) * 100) / 100, Math.round(drawn * 100) / 100)
+
+  // An east label grows rightwards from the same left edge...
+  const at = { x: 0, y: 0 }
+  const bare = labelRect(at, 'e', 'Aldbury North', fontSize, 10)
+  const badged = labelRect(at, 'e', 'Aldbury North', fontSize, 10, { x: 0, y: 0 }, { width: 40 })
+  expect(Math.round(badged.x), Math.round(bare.x), 'left edge unchanged: ')
+  expect(Math.round(badged.w - bare.w), 40, 'and it is 40 wider: ')
+
+  // ...a west one grows leftwards, keeping its right edge against the stop...
+  const w1 = labelRect(at, 'w', 'Aldbury North', fontSize, 10)
+  const w2 = labelRect(at, 'w', 'Aldbury North', fontSize, 10, { x: 0, y: 0 }, { width: 40 })
+  expect(Math.round(w2.x + w2.w), Math.round(w1.x + w1.w), 'right edge unchanged: ')
+
+  // ...and a label directly above keeps its name centred on the stop, leaning only the
+  // badges to the right, which is where the renderer puts them.
+  const n1 = labelRect(at, 'n', 'Aldbury North', fontSize, 10)
+  const n2 = labelRect(at, 'n', 'Aldbury North', fontSize, 10, { x: 0, y: 0 }, { width: 40 })
+  expect(Math.round(n2.x), Math.round(n1.x), 'text still starts where it did: ')
+  expect(Math.round(n2.x + n2.w), Math.round(n1.x + n1.w + 40), 'strip hangs off the end: ')
+})
+
+check('the shipped map reserves label room for every badge it draws', () => {
+  const p = createSampleProject()
+  const net = buildNetwork(p)
+  const anchors = placeLabels(p, net, 'schematic')
+  const fs = p.style.fontSize
+  let badged = 0
+  for (const s of p.stations) {
+    if (s.badges.length === 0 || !s.name || s.label.hidden) continue
+    badged++
+    const isInterchange = (net.linesAtStation.get(s.id)?.length ?? 0) > 1
+    const gap = (isInterchange ? p.style.stationRadius * 1.45 : p.style.stationRadius) + 5
+    const rect = labelRect(
+      s.schematic,
+      anchors.get(s.id) ?? 'e',
+      s.name,
+      fs,
+      gap,
+      s.label.offset,
+      labelExtras(p, s),
+    )
+    const need = estimateTextWidth(s.name, fs) + badgeStripWidth(s.badges.length, fs)
+    assert(rect.w >= need - 0.01, `${s.name}: reserved ${rect.w} for ${need}`)
+  }
+  assert(badged > 0, 'the example map should have badged stations to check')
+})
+
+check('a second name hangs below the first, and the box says so', () => {
+  const p = createEmptyProject('two names')
+  const s = makeStation(newStationId(), 'Aldbury Airport', { x: 0, y: 0 })
+  s.nameSecondary = 'Maes Awyr'
+  p.stations.push(s)
+  const extras = labelExtras(p, s)
+  assert(extras.height > 0, 'a second name takes a line of its own')
+
+  // Whichever side of the stop the label is on, the extra line goes downwards — so the
+  // box has to grow downwards, never up into the gap the first line was placed by.
+  for (const anchor of ['e', 'n', 's'] as const) {
+    const one = labelRect(s.schematic, anchor, s.name, p.style.fontSize, 10)
+    const two = labelRect(s.schematic, anchor, s.name, p.style.fontSize, 10, { x: 0, y: 0 }, extras)
+    expect(Math.round(two.y), Math.round(one.y), `${anchor} keeps its top: `)
+    expect(
+      Math.round(two.y + two.h),
+      Math.round(one.y + one.h + extras.height),
+      `${anchor} grows downwards: `,
+    )
+  }
 })
 
 check('a pinned label keeps its anchor', () => {
@@ -1177,6 +1273,21 @@ check('crossings ignore a line crossing itself', () => {
 // ---------------------------------------------------------------------------
 // The example, and the bounds that have to contain it
 // ---------------------------------------------------------------------------
+
+check('every label fits inside the exported page', () => {
+  const p = createSampleProject()
+  const net = buildNetwork(p)
+  const b = contentBounds(p, 'schematic', 0, net)
+  for (const r of labelRects(p, net, 'schematic')) {
+    assert(
+      r.x >= b.minX - 0.01 &&
+        r.y >= b.minY - 0.01 &&
+        r.x + r.w <= b.maxX + 0.01 &&
+        r.y + r.h <= b.maxY + 0.01,
+      `a label at ${Math.round(r.x)},${Math.round(r.y)} falls outside the page`,
+    )
+  }
+})
 
 check('map furniture counts towards the content bounds', () => {
   const p = createEmptyProject('b')

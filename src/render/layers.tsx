@@ -19,7 +19,7 @@ import {
   polylinePath,
   dist,
 } from '../domain/geometry'
-import { labelRect, placeLabels } from '../domain/labels'
+import { badgeCenters, BADGE_DIAMETER, estimateTextWidth, placeLabels } from '../domain/labels'
 import {
   branchGeometry,
   segmentKey,
@@ -913,14 +913,25 @@ export function LabelsLayer({
         const y = pos.y + dir.y * gap + s.label.offset.y
 
         const textAnchor = dir.x > 0.3 ? 'start' : dir.x < -0.3 ? 'end' : 'middle'
-        const dy = dir.y > 0.3 ? '0.85em' : dir.y < -0.3 ? '-0.2em' : '0.32em'
+        // Plain numbers, not `0.85em`: everything drawn around the name is positioned
+        // relative to this baseline, and a length that has to be resolved against a font
+        // cannot be added to. The second name spent a while stacked on the first because
+        // its offset was written as a CSS `calc()`, which an SVG attribute discards.
+        const dy = dir.y > 0.3 ? fontSize * 0.85 : dir.y < -0.3 ? fontSize * -0.2 : fontSize * 0.32
 
         const secondSize = fontSize * project.style.secondaryNameScale
         const badges = project.view.showBadges ? s.badges : []
-        // Badges sit on the far side of the name from the stop, so they never collide
-        // with the track, and they read as belonging to the label rather than the dot.
-        const badgeX = textAnchor === 'end' ? x - 0 : x
+        // Badges follow the name, on the far side of it from the stop: they belong to
+        // the label, and the auto-placer has reserved exactly this much room for them
+        // (`badgeStripWidth`), so a crowded map moves the whole thing rather than
+        // printing icons over the letters.
+        const textW = estimateTextWidth(s.name, fontSize)
+        const badgeX =
+          textAnchor === 'start' ? x + textW : textAnchor === 'end' ? x - textW : x + textW / 2
         const badgeDir = textAnchor === 'end' ? -1 : 1
+        // The badges ride the name's baseline, not the anchor point above it.
+        const badgeY = y + dy - fontSize * 0.32
+        const centers = badgeCenters(badges.length, fontSize)
 
         return (
           <g key={s.id} transform={s.label.angle ? `rotate(${s.label.angle} ${x} ${y})` : undefined}>
@@ -946,7 +957,7 @@ export function LabelsLayer({
               <text
                 x={x}
                 y={y}
-                dy={`calc(${dy} + ${secondSize * 1.15}px)`}
+                dy={dy + secondSize * 1.15}
                 textAnchor={textAnchor}
                 fontSize={secondSize}
                 fontFamily={fontFamily}
@@ -964,13 +975,13 @@ export function LabelsLayer({
             )}
 
             {badges.length > 0 && (
-              <g transform={`translate(${badgeX} ${y})`} pointerEvents="none">
+              <g transform={`translate(${badgeX} ${badgeY})`} pointerEvents="none">
                 {badges.map((b, i) => (
                   <StationBadge
                     key={b}
                     id={b}
-                    x={badgeDir * (i * (fontSize * 0.92) + fontSize * 0.55)}
-                    size={fontSize * 0.78}
+                    x={badgeDir * centers[i]}
+                    size={fontSize * BADGE_DIAMETER}
                     fg={foreground}
                     bg={background}
                   />
@@ -982,7 +993,7 @@ export function LabelsLayer({
               <text
                 x={x}
                 y={y}
-                dy={`calc(${dy} - ${fontSize * 0.95}px)`}
+                dy={dy - fontSize * 0.95}
                 textAnchor={textAnchor}
                 fontSize={fontSize * 0.7}
                 fontFamily={fontFamily}
@@ -998,20 +1009,6 @@ export function LabelsLayer({
       })}
     </g>
   )
-}
-
-/** Bounding boxes of the resolved labels — used by export to size the page. */
-export function labelBounds(project: Project, network: Network, space: Space) {
-  const anchors = placeLabels(project, network, space)
-  const rects = []
-  for (const s of project.stations) {
-    if (!s.name || s.label.hidden) continue
-    const anchor = anchors.get(s.id) ?? 'e'
-    const isInterchange = (network.linesAtStation.get(s.id)?.length ?? 0) > 1
-    const gap = (isInterchange ? project.style.stationRadius * 1.45 : project.style.stationRadius) + 5
-    rects.push(labelRect(s[space], anchor, s.name, project.style.fontSize, gap, s.label.offset))
-  }
-  return rects
 }
 
 // ---------------------------------------------------------------------------

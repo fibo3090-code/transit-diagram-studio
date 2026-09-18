@@ -33,7 +33,7 @@ const noop = () => {}
 function Board({ scenario, width = 560, height = 340 }: { scenario: Scenario; width?: number; height?: number }) {
   const { project } = scenario
   const network = useMemo(() => buildNetwork(project), [project])
-  const b = useMemo(() => contentBounds(project, 'schematic', 48), [project])
+  const b = useMemo(() => contentBounds(project, 'schematic', 48, network), [project, network])
 
   const w = Math.max(1, b.maxX - b.minX)
   const h = Math.max(1, b.maxY - b.minY)
