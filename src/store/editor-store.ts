@@ -176,6 +176,9 @@ interface EditorState {
   mutate: (label: string, recipe: (d: Project) => void, opts?: MutateOptions) => void
   undo: () => void
   redo: () => void
+  /** Negative steps back through the past, positive forward through the future. */
+  travel: (steps: number) => void
+  timeline: () => { past: { label: string; at: number }[]; future: { label: string; at: number }[] }
   canUndo: () => boolean
   canRedo: () => boolean
   undoLabel: () => string | null
@@ -468,6 +471,34 @@ export const useEditor = create<EditorState>((set, get) => {
         dirty: true,
       })
     },
+
+    /**
+     * Step back or forward several moves at once.
+     *
+     * Undo is a door you can only walk through one step at a time, and after twenty
+     * small nudges "put it back how it was before I started moving things" is twenty
+     * keystrokes and a guess about when to stop. Applying the patches in order is the
+     * same operation the single step does, so nothing new can go wrong with it.
+     */
+    travel: (steps) => {
+      if (steps === 0) return
+      const back = steps < 0
+      for (let i = 0; i < Math.abs(steps); i++) {
+        if (back) {
+          if (get().past.length === 0) break
+          get().undo()
+        } else {
+          if (get().future.length === 0) break
+          get().redo()
+        }
+      }
+    },
+
+    /** The moves either side of where you are, newest first, for a history list. */
+    timeline: () => ({
+      past: get().past.map((e) => ({ label: e.label, at: e.at })),
+      future: get().future.map((e) => ({ label: e.label, at: e.at })),
+    }),
 
     canUndo: () => get().past.length > 0,
     canRedo: () => get().future.length > 0,

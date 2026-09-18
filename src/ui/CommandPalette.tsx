@@ -7,9 +7,18 @@ interface Entry {
   id: string
   label: string
   hint: string
-  group: 'Station' | 'Line' | 'Go' | 'Do'
+  group: 'Station' | 'Line' | 'Go' | 'Do' | 'History'
   run: () => void
   color?: string
+}
+
+/** How long ago, in the roughest terms that are still useful. */
+function ago(at: number): string {
+  const secs = Math.max(0, Math.round((Date.now() - at) / 1000))
+  if (secs < 60) return 'just now'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins} min ago`
+  return `${Math.round(mins / 60)} h ago`
 }
 
 /**
@@ -48,6 +57,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const straightenLine = useEditor((s) => s.straightenLine)
   const undo = useEditor((s) => s.undo)
   const redo = useEditor((s) => s.redo)
+  const travel = useEditor((s) => s.travel)
+  const timeline = useEditor((s) => s.timeline)
 
   useEffect(() => inputRef.current?.focus(), [])
 
@@ -125,8 +136,50 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => setView({ autoLabels: !project.view.autoLabels }),
       },
     )
+
+    // The history, as somewhere you can go rather than a door you step through one move
+    // at a time. It lives here rather than in a panel because it is the thing you want
+    // twice a week and never want taking up room: after twenty small nudges, "put it
+    // back to before I started moving things" is twenty keystrokes and a guess about
+    // when to stop.
+    const line = timeline()
+    line.past
+      .slice()
+      .reverse()
+      .slice(0, 20)
+      .forEach((entry, i) => {
+        out.push({
+          id: `hist-back-${i}`,
+          label: `Undo back to before “${entry.label}”`,
+          hint: `${i + 1} step${i === 0 ? '' : 's'} back · ${ago(entry.at)}`,
+          group: 'History',
+          run: () => travel(-(i + 1)),
+        })
+      })
+    line.future.slice(0, 20).forEach((entry, i) => {
+      out.push({
+        id: `hist-fwd-${i}`,
+        label: `Redo forward through “${entry.label}”`,
+        hint: `${i + 1} step${i === 0 ? '' : 's'} forward`,
+        group: 'History',
+        run: () => travel(i + 1),
+      })
+    })
+
     return out
-  }, [project, select, setTool, setSpace, setView, setActiveLine, straightenLine, undo, redo])
+  }, [
+    project,
+    select,
+    setTool,
+    setSpace,
+    setView,
+    setActiveLine,
+    straightenLine,
+    undo,
+    redo,
+    travel,
+    timeline,
+  ])
 
   const results = useMemo(() => {
     const scored = entries
