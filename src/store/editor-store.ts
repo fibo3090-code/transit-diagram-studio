@@ -29,6 +29,7 @@ import {
   segmentKey,
   type Network,
   type Space,
+  swapAcrossRun,
 } from '../domain/network'
 import { findRoute, type Route } from '../domain/routing'
 import type {
@@ -248,6 +249,12 @@ interface EditorState {
 
   // -- corridors
   setCorridorOrder: (key: string, order: LineId[]) => void
+  moveLineAcrossCorridor: (
+    key: string,
+    lineId: LineId,
+    delta: -1 | 1,
+    scope?: 'run' | 'here',
+  ) => void
 
   // -- per-crossing tuning
   setCrossingOverride: (key: string, patch: CrossingOverride) => void
@@ -853,6 +860,30 @@ export const useEditor = create<EditorState>((set, get) => {
       get().mutate('Reorder corridor', (d) => {
         d.corridorOrder[key] = [...order]
       }),
+
+    /**
+     * Move one line one place across a bundle, everywhere the two stay together.
+     *
+     * Ordering is a question about a RUN. Two lines sharing twelve segments read as one
+     * pair of parallel tracks, so swapping them over a single segment produces a visible
+     * crossover in the middle of a straight — never what was meant. `sharedRun` finds
+     * every corridor the pair keeps each other company on, and all of them are written
+     * in one undoable step. `scope: 'here'` is the escape hatch for the rare case where
+     * a genuine crossover IS what you want.
+     */
+    moveLineAcrossCorridor: (key, lineId, delta, scope = 'run') => {
+      const project = get().project
+      if (!project) return
+      const writes = swapAcrossRun(networkOf(project), key, lineId, delta, scope)
+      const keys = Object.keys(writes)
+      if (keys.length === 0) return
+      get().mutate(
+        keys.length > 1 ? 'Move line across the run' : 'Move line across',
+        (d) => {
+          for (const k of keys) d.corridorOrder[k] = writes[k]
+        },
+      )
+    },
 
     setCrossingOverride: (key, patch) =>
       get().mutate('Adjust a crossing', (d) => {

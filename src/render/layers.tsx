@@ -317,6 +317,8 @@ export function LinesLayer({
   network,
   space,
   selectedLines,
+  selectedCrossings,
+  zoom = 1,
   onLinePointerDown,
   onSegmentPointerDown,
   onCrossingPointerDown,
@@ -325,6 +327,9 @@ export function LinesLayer({
   network: Network
   space: Space
   selectedLines: Set<string>
+  selectedCrossings?: Set<string>
+  /** Used to keep the crossing targets a constant size on screen. */
+  zoom?: number
   onLinePointerDown: (e: React.PointerEvent, lineId: LineId) => void
   onSegmentPointerDown: (e: React.PointerEvent, hit: SegmentHit) => void
   onCrossingPointerDown: (e: React.PointerEvent, key: string) => void
@@ -509,23 +514,48 @@ export function LinesLayer({
                   }),
                 )}
 
-            {/* Clicking a crossing selects it, so its break can be tuned by hand. */}
-            {mine.map((c) => (
-              <rect
-                key={`hit-${c.key}`}
-                x={-Math.max(c.length, 14) / 2}
-                y={-Math.max(c.height, 14) / 2}
-                width={Math.max(c.length, 14)}
-                height={Math.max(c.height, 14)}
-                fill="transparent"
-                transform={`translate(${c.at.x} ${c.at.y}) rotate(${
-                  (Math.atan2(c.dir.y, c.dir.x) * 180) / Math.PI
-                })`}
-                data-ui="hit"
-                style={{ cursor: 'pointer' }}
-                onPointerDown={(e) => onCrossingPointerDown(e, c.key)}
-              />
-            ))}
+            {/*
+              Clicking a crossing selects it, so its break can be tuned by hand. That has
+              always been true and nobody could have known: the target was fourteen
+              diagram units, which at a working zoom is a nine-pixel square with no
+              hover, no cursor change and no sign that anything is there. It is now a
+              constant size on screen, lights up under the pointer, and wears a ring
+              wherever it has been tuned, so the ones you have touched are findable.
+            */}
+            {mine.map((c) => {
+              const reach = Math.max(11, 13 / zoom)
+              const picked = selectedCrossings?.has(c.key)
+              const tuned = Boolean(project.crossings[c.key])
+              return (
+                <g
+                  key={`hit-${c.key}`}
+                  transform={`translate(${c.at.x} ${c.at.y}) rotate(${
+                    (Math.atan2(c.dir.y, c.dir.x) * 180) / Math.PI
+                  })`}
+                  data-ui="hit"
+                >
+                  {(picked || tuned) && (
+                    <circle
+                      r={reach * 0.78}
+                      fill="none"
+                      stroke={picked ? '#0F172A' : '#94A3B8'}
+                      strokeWidth={Math.max(1, 1.6 / zoom)}
+                      strokeDasharray={picked ? undefined : `${3 / zoom} ${3 / zoom}`}
+                      pointerEvents="none"
+                    />
+                  )}
+                  <rect
+                    x={-Math.max(c.length, reach * 2) / 2}
+                    y={-Math.max(c.height, reach * 2) / 2}
+                    width={Math.max(c.length, reach * 2)}
+                    height={Math.max(c.height, reach * 2)}
+                    fill="transparent"
+                    className="cursor-pointer hover:fill-slate-900/10"
+                    onPointerDown={(e) => onCrossingPointerDown(e, c.key)}
+                  />
+                </g>
+              )
+            })}
 
             {/* Invisible per-segment hit areas. Generous width so a thin bus route is
                 as easy to grab as a thick metro one. */}

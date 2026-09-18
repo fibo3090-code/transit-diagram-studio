@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 
 import { applyCsv, linesToCsv, parseCsv, stationsToCsv, type ImportReport } from '../domain/csv'
 import { LINE_PALETTE, STYLE_PRESETS, modeById } from '../domain/defaults'
-import { splitSegmentKey, type Space } from '../domain/network'
+import { segmentKey, splitSegmentKey, type Space } from '../domain/network'
 import type {
   AssetId,
   BadgeShape,
@@ -1218,8 +1218,7 @@ export function Inspector() {
   const selection = useEditor((s) => s.selection)
   if (!project) return null
 
-  const crossingKey =
-    selection.crossings.length === 1 ? selection.crossings[0] : undefined
+  const crossingKeys = selection.crossings
   const transfer =
     selection.transfers.length === 1
       ? project.transfers.find((t) => t.id === selection.transfers[0])
@@ -1246,8 +1245,8 @@ export function Inspector() {
   // scrolling. This used to be a second fixed-width aside nested inside the first.
   return (
     <>
-      {crossingKey ? (
-        <CrossingInspector crossingKey={crossingKey} />
+      {crossingKeys.length > 0 ? (
+        <CrossingInspector keys={crossingKeys} />
       ) : transfer ? (
         <TransferInspector id={transfer.id} />
       ) : station ? (
@@ -1682,6 +1681,92 @@ export function MapStylePanel() {
   )
 }
 
+
+/**
+ * Which track each line runs on, where several share a corridor.
+ *
+ * The model has had `corridorOrder` since the beginning and it was all but unusable:
+ * reachable only by selecting a LINE, buried at the foot of that inspector, and listed
+ * one row per SEGMENT, so putting the red line above the blue one along a twelve-segment
+ * run meant twelve trips through a panel, each identified by a pair of station names.
+ *
+ * Here it is where the question gets asked — at the place you are looking at — and one
+ * move applies to the whole run the two lines share.
+ */
+function TrackOrder({ id }: { id: StationId }) {
+  const project = useEditor((s) => s.project)!
+  const move = useEditor((s) => s.moveLineAcrossCorridor)
+  const network = networkOf(project)
+
+  const groups = useMemo(() => {
+    const out: { key: string; toward: string; lines: LineId[] }[] = []
+    const seen = new Set<string>()
+    for (const n of network.neighbours.get(id) ?? []) {
+      const key = segmentKey(id, n)
+      const lines = network.corridors.get(key) ?? []
+      if (lines.length < 2) continue
+      // A station in the middle of a bundle has the same lines on both sides of it.
+      // Listing that twice asks the same question twice and invites two answers.
+      const signature = lines.join('|')
+      if (seen.has(signature)) continue
+      seen.add(signature)
+      out.push({
+        key,
+        toward: project.stations.find((s) => s.id === n)?.name || 'the next stop',
+        lines,
+      })
+    }
+    return out
+  }, [network, project.stations, id])
+
+  if (groups.length === 0) return null
+
+  return (
+    <Section title={`Tracks through here (${groups.length})`} defaultOpen>
+      <p className="text-[11px] leading-relaxed text-slate-500">
+        The order across the corridor, first row on one side. Moving a line moves it
+        everywhere the two stay side by side, not just here.
+      </p>
+      {groups.map((g) => (
+        <div key={g.key} className="rounded-lg border border-slate-200 p-2">
+          <p className="mb-1 truncate text-[10.5px] text-slate-500">towards {g.toward}</p>
+          <ul className="space-y-0.5">
+            {g.lines.map((lineId, i) => {
+              const l = project.lines.find((x) => x.id === lineId)
+              if (!l) return null
+              return (
+                <li key={lineId} className="flex items-center gap-1.5">
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
+                    style={{ background: l.color }}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[11.5px] text-slate-700">
+                    {l.name}
+                  </span>
+                  <IconButton
+                    label="Move towards the first side"
+                    disabled={i === 0}
+                    onClick={() => move(g.key, lineId, -1)}
+                  >
+                    <span className="text-[11px]">↑</span>
+                  </IconButton>
+                  <IconButton
+                    label="Move towards the other side"
+                    disabled={i === g.lines.length - 1}
+                    onClick={() => move(g.key, lineId, 1)}
+                  >
+                    <span className="text-[11px]">↓</span>
+                  </IconButton>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+    </Section>
+  )
+}
+
 function StationInspector({ id }: { id: StationId }) {
   const project = useEditor((s) => s.project)!
   const space = useEditor((s) => s.space)
@@ -1851,6 +1936,8 @@ function StationInspector({ id }: { id: StationId }) {
       </Section>
 
       <StationTransfers id={id} />
+
+      <TrackOrder id={id} />
 
       <Section title="Label">
         <p className="text-[11px] leading-relaxed text-slate-500">
@@ -2178,88 +2265,123 @@ function LineInspector({ line }: { line: Line }) {
   )
 }
 
+/**
+ * Where this line runs beside others, and in what order.
+ *
+ * Listed by RUN, not by segment. A pair of lines sharing a dozen segments is one thing
+ * to a reader — one pair of parallel tracks — and the old per-segment list turned a
+ * single decision into a dozen identical ones, then capped itself at six of them.
+ */
 export function CorridorInspector({ lineId }: { lineId: LineId }) {
   const project = useEditor((s) => s.project)!
-  const setCorridorOrder = useEditor((s) => s.setCorridorOrder)
+  const move = useEditor((s) => s.moveLineAcrossCorridor)
   const network = networkOf(project)
 
-  const shared = useMemo(() => {
-    const out: { key: string; lines: LineId[] }[] = []
-    for (const [key, ids] of network.corridors) {
-      if (ids.length > 1 && ids.includes(lineId)) out.push({ key, lines: ids })
+  const runs = useMemo(() => {
+    const mine = [...network.corridors.entries()]
+      .filter(([, ids]) => ids.length > 1 && ids.includes(lineId))
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    const shape = new Map(mine)
+
+    // A run is a connected stretch carrying exactly the same set of lines. Where the
+    // set changes — one joins, one leaves — the ordering question changes with it.
+    const byStation = new Map<string, string[]>()
+    for (const [key, ids] of mine) {
+      for (const end of splitSegmentKey(key)) {
+        const bucket = `${end}\u0000${ids.join('|')}`
+        const list = byStation.get(bucket)
+        if (list) list.push(key)
+        else byStation.set(bucket, [key])
+      }
     }
-    return out
+
+    const seen = new Set<string>()
+    const out: { key: string; lines: LineId[]; group: string[] }[] = []
+    for (const [key, ids] of mine) {
+      if (seen.has(key)) continue
+      seen.add(key)
+      const group = [key]
+      const queue = [key]
+      while (queue.length > 0) {
+        const cur = queue.shift()!
+        for (const end of splitSegmentKey(cur)) {
+          for (const next of byStation.get(`${end}\u0000${ids.join('|')}`) ?? []) {
+            if (seen.has(next) || shape.get(next)?.join('|') !== ids.join('|')) continue
+            seen.add(next)
+            group.push(next)
+            queue.push(next)
+          }
+        }
+      }
+      out.push({ key, lines: ids, group })
+    }
+    return out.sort((a, b) => b.group.length - a.group.length)
   }, [network, lineId])
 
-  if (shared.length === 0) return null
+  if (runs.length === 0) return null
 
-  const nameOf = (id: StationId) =>
-    project.stations.find((s) => s.id === id)?.name || 'Unnamed'
+  const nameOf = (id: string) => project.stations.find((s) => s.id === id)?.name || 'Unnamed'
 
-  const move = (key: string, ids: LineId[], from: number, to: number) => {
-    if (to < 0 || to >= ids.length) return
-    const next = [...ids]
-    const [x] = next.splice(from, 1)
-    next.splice(to, 0, x)
-    setCorridorOrder(key, next)
+  /** The two ends of a run: stations its segments touch exactly once. */
+  const endsOf = (group: string[]): string => {
+    const count = new Map<string, number>()
+    for (const key of group) {
+      for (const end of splitSegmentKey(key)) count.set(end, (count.get(end) ?? 0) + 1)
+    }
+    const ends = [...count.entries()].filter(([, n]) => n === 1).map(([id]) => nameOf(id))
+    if (ends.length === 2) return `${ends[0]} – ${ends[1]}`
+    return `${group.length} segment${group.length === 1 ? '' : 's'}`
   }
 
   return (
-    <Section title={`Shared with other lines (${shared.length})`}>
+    <Section title={`Runs alongside (${runs.length})`}>
       <p className="text-[11px] leading-relaxed text-slate-500">
-        Where lines run together they are drawn side by side. This order decides which sits
-        on which side.
+        Where lines run together they are drawn side by side. Moving one changes the whole
+        stretch they share.
       </p>
-      {shared.slice(0, 6).map(({ key, lines }) => {
-        const [a, b] = splitSegmentKey(key)
-        return (
-          <div key={key} className="rounded-lg border border-slate-200 p-2">
-            <p className="mb-1 truncate font-mono text-[10px] text-slate-500">
-              {nameOf(a)} – {nameOf(b)}
-            </p>
-            <ul className="space-y-0.5">
-              {lines.map((id, i) => {
-                const l = project.lines.find((x) => x.id === id)
-                if (!l) return null
-                return (
-                  <li key={id} className="flex items-center gap-1.5">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
-                      style={{ background: l.color }}
-                    />
-                    <span
-                      className={`min-w-0 flex-1 truncate text-[11.5px] ${
-                        id === lineId ? 'font-semibold text-slate-900' : 'text-slate-600'
-                      }`}
-                    >
-                      {l.name}
-                    </span>
-                    <IconButton
-                      label="Move to the other side"
-                      disabled={i === 0}
-                      onClick={() => move(key, lines, i, i - 1)}
-                    >
-                      <span className="text-[11px]">↑</span>
-                    </IconButton>
-                    <IconButton
-                      label="Move to the other side"
-                      disabled={i === lines.length - 1}
-                      onClick={() => move(key, lines, i, i + 1)}
-                    >
-                      <span className="text-[11px]">↓</span>
-                    </IconButton>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        )
-      })}
-      {shared.length > 6 && (
-        <p className="font-mono text-[10px] text-slate-400">
-          …and {shared.length - 6} more. Reordering the Lines list changes them all at once.
-        </p>
-      )}
+      {runs.map((run) => (
+        <div key={run.key} className="rounded-lg border border-slate-200 p-2">
+          <p className="mb-1 truncate text-[10.5px] text-slate-500">
+            {endsOf(run.group)}
+            {run.group.length > 1 && ` · ${run.group.length} segments`}
+          </p>
+          <ul className="space-y-0.5">
+            {run.lines.map((id, i) => {
+              const l = project.lines.find((x) => x.id === id)
+              if (!l) return null
+              return (
+                <li key={id} className="flex items-center gap-1.5">
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
+                    style={{ background: l.color }}
+                  />
+                  <span
+                    className={`min-w-0 flex-1 truncate text-[11.5px] ${
+                      id === lineId ? 'font-semibold text-slate-900' : 'text-slate-600'
+                    }`}
+                  >
+                    {l.name}
+                  </span>
+                  <IconButton
+                    label="Move towards the first side"
+                    disabled={i === 0}
+                    onClick={() => move(run.key, id, -1)}
+                  >
+                    <span className="text-[11px]">↑</span>
+                  </IconButton>
+                  <IconButton
+                    label="Move towards the other side"
+                    disabled={i === run.lines.length - 1}
+                    onClick={() => move(run.key, id, 1)}
+                  >
+                    <span className="text-[11px]">↓</span>
+                  </IconButton>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
     </Section>
   )
 }
@@ -2666,24 +2788,56 @@ function TransferInspector({ id }: { id: string }) {
 // One crossing
 // ---------------------------------------------------------------------------
 
-function CrossingInspector({ crossingKey }: { crossingKey: string }) {
+/**
+ * One overpass, or a row of them.
+ *
+ * Every crossing has always had its own gap, its own choice of which line goes over and
+ * its own off switch — the model carried all four. Reaching them meant hitting a
+ * nine-pixel invisible square, so in practice people changed the map-wide sliders and
+ * lived with the result. Shift-click adds to the selection, and the two buttons at the
+ * foot apply what is set here to every crossing this pair of lines makes, which is
+ * usually the honest unit of the decision.
+ */
+function CrossingInspector({ keys }: { keys: string[] }) {
   const project = useEditor((s) => s.project)!
   const setOverride = useEditor((s) => s.setCrossingOverride)
   const clearOverride = useEditor((s) => s.clearCrossingOverride)
-  const o = project.crossings[crossingKey] ?? {}
+  const select = useEditor((s) => s.select)
 
-  // Which two lines meet here is recoverable from the key, which is built out of them.
-  const lineNames = useMemo(() => {
-    const parts = crossingKey.split('#')[0].split('|')
-    return parts
+  const first = keys[0]
+  const o = project.crossings[first] ?? {}
+  const many = keys.length > 1
+
+  /** Which two lines meet here is recoverable from the key, which is built out of them. */
+  const linesOf = (key: string) =>
+    key
+      .split('#')[0]
+      .split('|')
       .map((half) => half.split('~')[0])
       .map((id) => project.lines.find((l) => l.id === id))
       .filter((l): l is (typeof project.lines)[number] => !!l)
-  }, [crossingKey, project.lines])
+
+  const lineNames = useMemo(() => linesOf(first), [first, project.lines])
+
+  /** Every crossing anywhere between the same pair of lines. */
+  const siblings = useMemo(() => {
+    const mine = new Set(lineNames.map((l) => l.id))
+    if (mine.size < 2) return []
+    const out: string[] = []
+    for (const key of Object.keys(project.crossings)) {
+      const ids = new Set(linesOf(key).map((l) => l.id))
+      if (ids.size === mine.size && [...ids].every((id) => mine.has(id))) out.push(key)
+    }
+    return out
+  }, [lineNames, project.crossings])
+
+  const apply = (patch: Parameters<typeof setOverride>[1], to: string[] = keys) => {
+    for (const key of to) setOverride(key, patch)
+  }
 
   return (
     <div className="space-y-3">
-      <SectionLabel>Crossing</SectionLabel>
+      <SectionLabel>{many ? `${keys.length} crossings` : 'Crossing'}</SectionLabel>
 
       <div className="rounded-xl bg-slate-50 px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -2698,7 +2852,9 @@ function CrossingInspector({ crossingKey }: { crossingKey: string }) {
           ))}
         </div>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-slate-500">
-          Where these two pass each other. The break is drawn on the upper line only.
+          {many
+            ? 'Changes apply to all of them at once.'
+            : 'Where these two pass each other. The break is drawn on the upper line only.'}
         </p>
       </div>
 
@@ -2708,7 +2864,7 @@ function CrossingInspector({ crossingKey }: { crossingKey: string }) {
         min={0}
         max={16}
         step={0.5}
-        onChange={(v) => setOverride(crossingKey, { length: v })}
+        onChange={(v) => apply({ length: v })}
       />
       <Slider
         label="Gap height"
@@ -2716,26 +2872,45 @@ function CrossingInspector({ crossingKey }: { crossingKey: string }) {
         min={0}
         max={16}
         step={0.5}
-        onChange={(v) => setOverride(crossingKey, { height: v })}
+        onChange={(v) => apply({ height: v })}
       />
 
       <div className="space-y-1.5 border-t border-slate-200 pt-3">
         <Toggle
           label="Send the other line over the top"
           checked={Boolean(o.flip)}
-          onChange={(v) => setOverride(crossingKey, { flip: v })}
+          onChange={(v) => apply({ flip: v })}
         />
         <Toggle
           label="No break here"
           hint="Let the two simply overlap"
           checked={Boolean(o.off)}
-          onChange={(v) => setOverride(crossingKey, { off: v })}
+          onChange={(v) => apply({ off: v })}
         />
       </div>
 
-      {Object.keys(o).length > 0 && (
+      {!many && siblings.length > 1 && (
+        <div className="space-y-1.5 border-t border-slate-200 pt-3">
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            These two lines cross each other in {siblings.length} places.
+          </p>
+          <Button className="w-full" onClick={() => apply(o, siblings)}>
+            Use these settings everywhere they cross
+          </Button>
+          <Button className="w-full" onClick={() => select({ crossings: siblings })}>
+            Select all {siblings.length}
+          </Button>
+        </div>
+      )}
+
+      {keys.some((k) => Object.keys(project.crossings[k] ?? {}).length > 0) && (
         <div className="border-t border-slate-200 pt-3">
-          <Button className="w-full" onClick={() => clearOverride(crossingKey)}>
+          <Button
+            className="w-full"
+            onClick={() => {
+              for (const key of keys) clearOverride(key)
+            }}
+          >
             Back to the map default
           </Button>
         </div>

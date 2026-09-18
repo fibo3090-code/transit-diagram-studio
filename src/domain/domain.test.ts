@@ -43,6 +43,8 @@ import {
   isForward,
   isRing,
   segmentKey,
+  sharedRun,
+  swapAcrossRun,
 } from './network'
 import { findCrossings } from './crossings'
 import { findRoute } from './routing'
@@ -302,6 +304,59 @@ check('corridorOrder override changes which line sits on which side', () => {
     `the override should put L2 on the other side, got ${m.get(l2.id)} vs ${m.get(l1.id)}`,
   )
   near(m.get(l1.id)! - m.get(l2.id)!, 10, 1e-9, 'still one spacing apart: ')
+})
+
+check('a shared run covers every segment two lines keep each other company on', () => {
+  const p: Project = createEmptyProject('t')
+  const a = station('A', 0, 0)
+  const b = station('B', 100, 0)
+  const c = station('C', 200, 0)
+  const d = station('D', 300, 0)
+  p.stations = [a, b, c, d]
+  const l1 = line('L1', [[a.id, b.id, c.id, d.id]], '#C9342B')
+  const l2 = line('L2', [[a.id, b.id, c.id]], '#1B4F9C')
+  p.lines = [l1, l2]
+  const net = buildNetwork(p)
+
+  const run = sharedRun(net, segmentKey(a.id, b.id), l1.id, l2.id)
+  expect(run.length, 2, 'A-B and B-C, not C-D: ')
+  assert(run.includes(segmentKey(b.id, c.id)), 'the run continues through B')
+  assert(!run.includes(segmentKey(c.id, d.id)), 'and stops where L2 does')
+
+  // A corridor neither line shares is not a run at all.
+  expect(sharedRun(net, segmentKey(c.id, d.id), l1.id, l2.id).length, 0)
+})
+
+check('moving a line across a bundle carries along the whole run', () => {
+  const p: Project = createEmptyProject('t')
+  const a = station('A', 0, 0)
+  const b = station('B', 100, 0)
+  const c = station('C', 200, 0)
+  const d = station('D', 300, 0)
+  p.stations = [a, b, c, d]
+  const l1 = line('L1', [[a.id, b.id, c.id, d.id]], '#C9342B')
+  const l2 = line('L2', [[a.id, b.id, c.id]], '#1B4F9C')
+  p.lines = [l1, l2]
+  let net = buildNetwork(p)
+
+  const ab = segmentKey(a.id, b.id)
+  const writes = swapAcrossRun(net, ab, l2.id, -1)
+  expect(Object.keys(writes).length, 2, 'both shared segments rewritten: ')
+
+  Object.assign(p.corridorOrder, writes)
+  net = buildNetwork(p)
+  for (const key of [ab, segmentKey(b.id, c.id)]) {
+    const m = net.offsets.get(key)!
+    assert(
+      m.get(l2.id)! < m.get(l1.id)!,
+      `L2 should be on the far side over ${key}, got ${m.get(l2.id)} vs ${m.get(l1.id)}`,
+    )
+  }
+
+  // ...and 'here' is the escape hatch that draws a deliberate crossover.
+  const one = swapAcrossRun(buildNetwork(createEmptyProject('x')), ab, l2.id, -1, 'here')
+  expect(Object.keys(one).length, 0, 'an unknown corridor changes nothing: ')
+  expect(Object.keys(swapAcrossRun(net, ab, l1.id, -1, 'here')).length, 1, 'just this one: ')
 })
 
 check('a line running through a merge does not move sideways', () => {

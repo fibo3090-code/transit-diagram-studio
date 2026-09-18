@@ -274,11 +274,12 @@ export function MapView() {
 
   const selectedStations = new Set(selection.stations)
   const selectedLines = new Set<string>(selection.lines)
+  const selectedCrossingSet = new Set<string>(selection.crossings)
   const selectedTerrain = new Set<TerrainId>(selection.terrain)
   const selectedImages = new Set<ImageId>(selection.images)
   const selectedPlacements = new Set<PlacementId>(selection.placements)
   const selectedTransfers = new Set<string>(selection.transfers)
-  void selection.crossings
+
 
   const capture = (e: React.PointerEvent) =>
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId)
@@ -511,7 +512,8 @@ export function MapView() {
   const onCrossingPointerDown = (e: React.PointerEvent, key: string) => {
     if (tool !== 'select') return
     e.stopPropagation()
-    select({ crossings: [key] })
+    // Shift adds, so a row of overpasses along one line can be tuned together.
+    select({ crossings: [key] }, e.shiftKey)
   }
 
   const onTransferPointerDown = (e: React.PointerEvent, id: string) => {
@@ -933,6 +935,8 @@ export function MapView() {
           network={network}
           space={space}
           selectedLines={selectedLines}
+          selectedCrossings={selectedCrossingSet}
+          zoom={viewport.zoom}
           onLinePointerDown={onLinePointerDown}
           onSegmentPointerDown={onSegmentPointerDown}
           onCrossingPointerDown={onCrossingPointerDown}

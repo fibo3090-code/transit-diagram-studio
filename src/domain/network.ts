@@ -582,3 +582,82 @@ export function allStopsOfLine(line: Line): Set<StationId> {
   for (const b of line.branches) for (const id of b.stops) out.add(id)
   return out
 }
+
+/**
+ * Every corridor where these two lines run side by side, reachable from this one.
+ *
+ * Reordering has to work on a run, not a segment. Two lines that share twelve segments
+ * are, to a reader, one pair of parallel tracks — swapping them over one segment and not
+ * the other eleven is never what anyone meant, and doing it twelve times by hand from a
+ * panel is why the feature went unused.
+ *
+ * The walk follows stations, and only steps into corridors that carry BOTH lines: where
+ * one of them leaves, the question of which side it is on stops existing.
+ */
+export function sharedRun(network: Network, from: SegmentKey | string, a: LineId, b: LineId): string[] {
+  const has = (key: string) => {
+    const ids = network.corridors.get(key)
+    return !!ids && ids.includes(a) && ids.includes(b)
+  }
+  if (!has(from)) return []
+
+  const byStation = new Map<StationId, string[]>()
+  for (const key of network.corridors.keys()) {
+    if (!has(key)) continue
+    for (const id of splitSegmentKey(key)) {
+      const list = byStation.get(id)
+      if (list) list.push(key)
+      else byStation.set(id, [key])
+    }
+  }
+
+  const seen = new Set<string>([from])
+  const queue = [from as string]
+  while (queue.length > 0) {
+    const cur = queue.shift()!
+    for (const end of splitSegmentKey(cur)) {
+      for (const next of byStation.get(end) ?? []) {
+        if (seen.has(next)) continue
+        seen.add(next)
+        queue.push(next)
+      }
+    }
+  }
+  return [...seen].sort()
+}
+
+/**
+ * The corridor orders to write so that `lineId` moves one place across its bundle.
+ *
+ * Returned rather than applied, so the decision is pure and testable and the store stays
+ * a thin wrapper around it. `scope: 'here'` limits the change to one segment, which is
+ * how you draw a deliberate crossover; the default carries it along the whole run, which
+ * is what someone means by "put the red line above the blue one".
+ */
+export function swapAcrossRun(
+  network: Network,
+  key: SegmentKey | string,
+  lineId: LineId,
+  delta: -1 | 1,
+  scope: 'run' | 'here' = 'run',
+): Record<string, LineId[]> {
+  const here = network.corridors.get(key)
+  if (!here) return {}
+  const from = here.indexOf(lineId)
+  const to = from + delta
+  if (from < 0 || to < 0 || to >= here.length) return {}
+  const other = here[to]
+
+  const keys = scope === 'here' ? [key as string] : sharedRun(network, key, lineId, other)
+  const out: Record<string, LineId[]> = {}
+  for (const k of keys.length > 0 ? keys : [key as string]) {
+    const order = [...(network.corridors.get(k) ?? [])]
+    const i = order.indexOf(lineId)
+    const j = order.indexOf(other)
+    if (i < 0 || j < 0) continue
+    order[i] = other
+    order[j] = lineId
+    out[k] = order
+  }
+  return out
+}
