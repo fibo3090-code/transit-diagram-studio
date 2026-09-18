@@ -39,6 +39,13 @@ export interface PdfOptions {
   dpi: number
   /** Split across several sheets that can be trimmed and taped into a poster. */
   tile: boolean
+  /**
+   * Printer's trim marks at the four corners of the content box.
+   *
+   * What a print shop asks for and what nobody remembers to add. They sit outside the
+   * trim, so they are cut away with the margin and never appear on the finished sheet.
+   */
+  cropMarks: boolean
 }
 
 export const defaultPdfOptions = (): PdfOptions => ({
@@ -47,6 +54,7 @@ export const defaultPdfOptions = (): PdfOptions => ({
   margin: 28,
   dpi: 200,
   tile: false,
+  cropMarks: false,
 })
 
 // ---------------------------------------------------------------------------
@@ -211,12 +219,38 @@ export async function buildPdf(
         ? `BT /F1 8 Tf ${opts.margin} ${opts.margin * 0.4} Td (${escapeText(title)} — sheet ${i + 1} of ${tiles.length}) Tj ET\n`
         : ''
 
+    // Trim marks: an L at each corner of the content box, held clear of it by a gap so
+    // the blade has something to line up on without cutting through the marks.
+    let marks = ''
+    if (opts.cropMarks) {
+      const len = Math.min(18, opts.margin * 0.6)
+      const gap = Math.min(6, opts.margin * 0.2)
+      const l = opts.margin
+      const r = opts.margin + contentW
+      const b = opts.margin
+      const t = opts.margin + contentH
+      const seg = (x1: number, y1: number, x2: number, y2: number) =>
+        `${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S\n`
+      marks =
+        `q 0 G 0.5 w\n` +
+        seg(l - gap, b, l - gap - len, b) +
+        seg(l, b - gap, l, b - gap - len) +
+        seg(r + gap, b, r + gap + len, b) +
+        seg(r, b - gap, r, b - gap - len) +
+        seg(l - gap, t, l - gap - len, t) +
+        seg(l, t + gap, l, t + gap + len) +
+        seg(r + gap, t, r + gap + len, t) +
+        seg(r, t + gap, r, t + gap + len) +
+        `Q\n`
+    }
+
     const content =
       `q\n` +
       `${opts.margin} ${opts.margin} ${contentW} ${contentH} re W n\n` +
       `${drawW.toFixed(3)} 0 0 ${drawH.toFixed(3)} ${xPlaced.toFixed(3)} ${yPlaced.toFixed(3)} cm\n` +
       `/Im0 Do\n` +
       `Q\n` +
+      marks +
       footer
 
     addObject(

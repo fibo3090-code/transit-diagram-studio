@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import type { ProjectId } from '../domain/types'
 import {
+  contentBounds,
   buildSvg,
   defaultExportOptions,
   rasterize,
@@ -233,6 +234,60 @@ function StatusBar({ onSearch }: { onSearch: () => void }) {
 // Export
 // ---------------------------------------------------------------------------
 
+
+/**
+ * What the map is being saved FOR.
+ *
+ * Every one of these is a set of numbers someone would otherwise have to know: that a
+ * print shop wants A0 at 300 dpi with trim marks, that a README banner wants to be
+ * about two thousand pixels wide and carry no legend, that a wallpaper wants to match
+ * the screen it will sit on. The controls underneath stay, for when none of them fit.
+ */
+interface PresetTools {
+  doPng: (scale: number, over?: Partial<ExportOptions>) => void
+  doPdf: (over?: Partial<PdfOptions>, overExport?: Partial<ExportOptions>) => void
+  doInteractive: (over?: Partial<ExportOptions>) => void
+  doSvg: (over?: Partial<ExportOptions>) => void
+  /** Scale that lands the drawing at roughly this many pixels across. */
+  wide: (px: number) => number
+}
+
+const PRESETS: {
+  id: string
+  name: string
+  hint: string
+  run: (t: PresetTools) => void
+}[] = [
+  {
+    id: 'poster',
+    name: 'Poster',
+    hint: 'A0 at 300 dpi, trim marks, legend and title block',
+    run: (t) =>
+      t.doPdf(
+        { pageSizeId: 'a0', dpi: 300, tile: false, cropMarks: true, margin: 40 },
+        { includeLegend: true, includeTitleBlock: true },
+      ),
+  },
+  {
+    id: 'banner',
+    name: 'Banner',
+    hint: 'Wide PNG for a README or a post, nothing added',
+    run: (t) => t.doPng(t.wide(2000), { includeLegend: false, includeTitleBlock: false }),
+  },
+  {
+    id: 'wallpaper',
+    name: 'Wallpaper',
+    hint: 'PNG at roughly 4K across, for a screen',
+    run: (t) => t.doPng(t.wide(3840), { includeLegend: false, includeTitleBlock: false }),
+  },
+  {
+    id: 'share',
+    name: 'Shareable page',
+    hint: 'One HTML file that pans, searches and plans journeys',
+    run: (t) => t.doInteractive({ includeLegend: false }),
+  },
+]
+
 function ExportDialog({ onClose }: { onClose: () => void }) {
   const project = useEditor((s) => s.project)!
   const space = useEditor((s) => s.space)
@@ -244,6 +299,13 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
 
   const surface = () =>
     document.querySelector('svg[data-map-surface]') as SVGSVGElement | null
+
+  /** A raster scale that lands the drawing near a target width, within sane bounds. */
+  const wide = (px: number) => {
+    const b = contentBounds(project, opts.space, opts.padding)
+    const across = Math.max(1, b.maxX - b.minX)
+    return Math.max(1, Math.min(8, Math.round((px / across) * 10) / 10))
+  }
 
   const withSurface = async (what: string, run: (el: SVGSVGElement) => Promise<void> | void) => {
     const el = surface()
@@ -259,15 +321,19 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const doSvg = () =>
+  const doSvg = (over?: Partial<ExportOptions>) =>
     withSurface('SVG', (el) =>
-      downloadText(buildSvg(el, project, opts), `${project.name || 'network'}.svg`, 'image/svg+xml'),
+      downloadText(
+        buildSvg(el, project, { ...opts, ...over }),
+        `${project.name || 'network'}.svg`,
+        'image/svg+xml',
+      ),
     )
 
-  const doPng = () =>
+  const doPng = (at = scale, over?: Partial<ExportOptions>) =>
     withSurface('PNG', async (el) => {
-      const r = await rasterize(buildSvg(el, project, opts), scale)
-      downloadBlob(r.blob, `${project.name || 'network'}@${scale}x.png`)
+      const r = await rasterize(buildSvg(el, project, { ...opts, ...over }), at)
+      downloadBlob(r.blob, `${project.name || 'network'}@${at}x.png`)
       setNote(
         r.clampedFrom
           ? `Saved at ${r.width}×${r.height}. ${r.clampedFrom}× would have passed the browser's canvas limit, so the scale was reduced.`
@@ -275,20 +341,25 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
       )
     })
 
-  const doPdf = () =>
+  const doPdf = (over?: Partial<PdfOptions>, overExport?: Partial<ExportOptions>) =>
     withSurface('PDF', async (el) => {
-      const r = await buildPdf(buildSvg(el, project, opts), pdf, project.name)
+      const settings = { ...pdf, ...over }
+      const r = await buildPdf(
+        buildSvg(el, project, { ...opts, ...overExport }),
+        settings,
+        project.name,
+      )
       downloadBlob(r.blob, `${project.name || 'network'}.pdf`)
       setNote(
         `${r.pages} page${r.pages === 1 ? '' : 's'} at ${r.pixelWidth}×${r.pixelHeight}px.` +
-          (pdf.tile ? ' Trim the margins and tape the sheets together.' : ''),
+          (settings.tile ? ' Trim the margins and tape the sheets together.' : ''),
       )
     })
 
-  const doInteractive = () =>
+  const doInteractive = (over?: Partial<ExportOptions>) =>
     withSurface('interactive page', (el) =>
       downloadText(
-        buildInteractiveHtml(buildSvg(el, project, opts), project),
+        buildInteractiveHtml(buildSvg(el, project, { ...opts, ...over }), project),
         `${project.name || 'network'}.html`,
         'text/html',
       ),
@@ -321,6 +392,30 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
           </IconButton>
         </div>
 
+        {/*
+          The four things people actually export, each one click.
+          A preset is not a shortcut for the options below it — it is the knowledge of
+          what a print shop, a README and a phone each want, which is exactly the part
+          that is tedious to look up and easy to get wrong.
+        */}
+        <div className="mb-4 grid grid-cols-2 gap-2">
+          {PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              disabled={!!busy}
+              onClick={() => preset.run({ doPng, doPdf, doInteractive, doSvg, wide })}
+              className="rounded-xl border border-slate-200 p-2.5 text-left transition-colors hover:border-slate-900 disabled:opacity-50"
+            >
+              <span className="block text-[12.5px] font-semibold text-slate-900">
+                {preset.name}
+              </span>
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
+                {preset.hint}
+              </span>
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-1.5 rounded-xl bg-slate-50 p-3">
           <Toggle
             label="Include screenshots"
@@ -346,7 +441,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
               Sharp at any size, with named layers per line. The best option for printing
               or for editing in Inkscape or Illustrator.
             </p>
-            <Button variant="primary" size="md" className="mt-2.5 w-full" onClick={doSvg}>
+            <Button variant="primary" size="md" className="mt-2.5 w-full" onClick={() => doSvg()}>
               Download SVG
             </Button>
           </div>
@@ -365,7 +460,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                   </option>
                 ))}
               </select>
-              <Button size="md" className="flex-1" disabled={!!busy} onClick={doPng}>
+              <Button size="md" className="flex-1" disabled={!!busy} onClick={() => doPng()}>
                 {busy === 'PNG' ? 'Rendering…' : 'Download PNG'}
               </Button>
             </div>
@@ -396,16 +491,22 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                   </option>
                 ))}
               </select>
-              <Button size="md" className="flex-1" disabled={!!busy} onClick={doPdf}>
+              <Button size="md" className="flex-1" disabled={!!busy} onClick={() => doPdf()}>
                 {busy === 'PDF' ? 'Building…' : 'PDF'}
               </Button>
             </div>
-            <div className="mt-2">
+            <div className="mt-2 space-y-1.5">
               <Toggle
                 label="Tile across several sheets"
                 hint="For a poster bigger than one page"
                 checked={pdf.tile}
                 onChange={(v) => setPdf({ ...pdf, tile: v })}
+              />
+              <Toggle
+                label="Printer's trim marks"
+                hint="Cut lines at the corners, outside the trim"
+                checked={pdf.cropMarks}
+                onChange={(v) => setPdf({ ...pdf, cropMarks: v })}
               />
             </div>
           </div>
@@ -416,7 +517,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
               One self-contained HTML file. Click a line to follow it, hover a station to
               see what calls there. Works offline, opens anywhere.
             </p>
-            <Button size="md" className="mt-2.5 w-full" disabled={!!busy} onClick={doInteractive}>
+            <Button size="md" className="mt-2.5 w-full" disabled={!!busy} onClick={() => doInteractive()}>
               {busy === 'interactive page' ? 'Building…' : 'Download HTML'}
             </Button>
           </div>
