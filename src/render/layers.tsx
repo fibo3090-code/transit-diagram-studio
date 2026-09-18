@@ -937,14 +937,18 @@ export function LabelsLayer({
     <g data-layer="labels">
       {project.stations.map((s) => {
         if (s.label.hidden || !s.name) return null
+        const placed = anchors.get(s.id)
         const resolved: LabelAnchor =
           s.label.pinned && s.label.anchor !== 'auto'
             ? s.label.anchor
-            : (anchors.get(s.id) ?? (s.label.anchor === 'auto' ? 'e' : s.label.anchor))
+            : (placed?.anchor ?? (s.label.anchor === 'auto' ? 'e' : s.label.anchor))
 
         const dir = ANCHOR_DIR[resolved] ?? ANCHOR_DIR.e
         const isInterchange = (network.linesAtStation.get(s.id)?.length ?? 0) > 1
-        const gap = (isInterchange ? stationRadius * 1.45 : stationRadius) + 5
+        // A label pushed out to the far ring gets a leader, so it still reads as
+        // belonging to its stop rather than floating between two of them.
+        const lift = s.label.pinned ? 0 : (placed?.lift ?? 0)
+        const gap = (isInterchange ? stationRadius * 1.45 : stationRadius) + 5 + lift
         const pos = s[space]
         const x = pos.x + dir.x * gap + s.label.offset.x
         const y = pos.y + dir.y * gap + s.label.offset.y
@@ -978,6 +982,18 @@ export function LabelsLayer({
 
         return (
           <g key={s.id} transform={s.label.angle ? `rotate(${s.label.angle} ${x} ${y})` : undefined}>
+            {lift > 0 && (
+              <line
+                x1={pos.x + dir.x * (stationRadius + 2)}
+                y1={pos.y + dir.y * (stationRadius + 2)}
+                x2={x - dir.x * 2}
+                y2={y - dir.y * 2}
+                stroke={foreground}
+                strokeWidth={0.9}
+                opacity={0.5}
+                pointerEvents="none"
+              />
+            )}
             <text
               x={x}
               y={y}

@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { boundsSize, closestOnSegment, dist, sub } from '../domain/geometry'
-import { placeLabels } from '../domain/labels'
+import { placeLabels, type Placed } from '../domain/labels'
 import { segmentKey, type Space } from '../domain/network'
 import {
   snapPoint,
@@ -24,7 +24,6 @@ import {
 import { stationLevels } from '../domain/symbols'
 import type {
   ImageId,
-  LabelAnchor,
   LineId,
   PlacementId,
   StationId,
@@ -267,7 +266,7 @@ export function MapView() {
   }
 
   const labelAnchors = useMemo(
-    () => (project && network ? placeLabels(project, network, space) : new Map<StationId, LabelAnchor>()),
+    () => (project && network ? placeLabels(project, network, space) : new Map<StationId, Placed>()),
     [project, network, space],
   )
 
@@ -781,7 +780,7 @@ export function MapView() {
           pinned: true,
           anchor:
             project.stations.find((s) => s.id === gesture.id)?.label.anchor === 'auto'
-              ? (labelAnchors.get(gesture.id) ?? 'e')
+              ? (labelAnchors.get(gesture.id)?.anchor ?? 'e')
               : undefined,
         })
         return

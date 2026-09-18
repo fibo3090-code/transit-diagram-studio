@@ -30,6 +30,8 @@ const COST_LABEL_OVERLAP = 100
 const COST_TRACK_OVERLAP = 60
 const COST_STATION_OVERLAP = 45
 const COST_ORDER = 4
+/** Pushing a label out to the far ring. Dear enough to be a last resort. */
+const COST_LIFT = 46
 
 const DIR: Record<LabelAnchor, Vec2> = {
   auto: { x: 1, y: 0 },
@@ -154,6 +156,20 @@ export function labelExtras(project: Project, station: Station): { width: number
 const overlaps = (a: Rect, b: Rect): boolean =>
   a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
 
+/**
+ * Where one label ended up.
+ *
+ * `lift` is how far beyond the usual gap it had to be pushed to find clear space. It is
+ * almost always zero; when it is not, the renderer draws a hairline from the stop to the
+ * name, because a label that has been moved out of its own crowd stops obviously
+ * belonging to anything. That leader is what every printed map does in a dense core, and
+ * it is the difference between "this name is further away" and "this name is adrift".
+ */
+export interface Placed {
+  anchor: LabelAnchor
+  lift: number
+}
+
 export interface PlacedLabel {
   id: StationId
   anchor: LabelAnchor
@@ -169,8 +185,8 @@ export function placeLabels(
   project: Project,
   network: Network,
   space: Space,
-): Map<StationId, LabelAnchor> {
-  const result = new Map<StationId, LabelAnchor>()
+): Map<StationId, Placed> {
+  const result = new Map<StationId, Placed>()
   const { fontSize, stationRadius } = project.style
   const stations = stationMap(project)
 
@@ -232,19 +248,26 @@ export function placeLabels(
     const extra = labelExtras(project, s)
 
     if (s.label.pinned && s.label.anchor !== 'auto') {
-      result.set(s.id, s.label.anchor)
+      result.set(s.id, { anchor: s.label.anchor, lift: 0 })
       taken.push(labelRect(s[space], s.label.anchor, s.name, fontSize, gap, s.label.offset, extra))
       continue
     }
 
     let bestAnchor: LabelAnchor = 'e'
+    let bestLift = 0
     let bestCost = Infinity
     let bestRect: Rect | null = null
 
+    // Two rings. The near one is where a label belongs; the far one is the escape a
+    // printed map takes when the near one is full, and it costs enough that it is only
+    // ever taken when everything close by is genuinely worse.
+    const rings = [0, fontSize * 1.9]
+    for (let r = 0; r < rings.length; r++) {
+      const lift = rings[r]
     for (let i = 0; i < CANDIDATES.length; i++) {
       const anchor = CANDIDATES[i]
-      const rect = labelRect(s[space], anchor, s.name, fontSize, gap, { x: 0, y: 0 }, extra)
-      let cost = i * COST_ORDER
+      const rect = labelRect(s[space], anchor, s.name, fontSize, gap + lift, { x: 0, y: 0 }, extra)
+      let cost = i * COST_ORDER + (lift > 0 ? COST_LIFT : 0)
 
       for (const t of taken) {
         if (overlaps(rect, t)) cost += COST_LABEL_OVERLAP
@@ -284,12 +307,18 @@ export function placeLabels(
       if (cost < bestCost) {
         bestCost = cost
         bestAnchor = anchor
+        bestLift = lift
         bestRect = rect
       }
-      if (cost === i * COST_ORDER) break // A clean spot; nothing later can beat it.
+      // A clean spot on the near ring; nothing further out can beat it.
+      if (cost === i * COST_ORDER && lift === 0) {
+        r = rings.length
+        break
+      }
+    }
     }
 
-    result.set(s.id, bestAnchor)
+    result.set(s.id, { anchor: bestAnchor, lift: bestLift })
     if (bestRect) taken.push(bestRect)
   }
 
@@ -310,13 +339,14 @@ export function labelRects(project: Project, network: Network, space: Space): Re
     if (!s.name || s.label.hidden) continue
     const isInterchange = (network.linesAtStation.get(s.id)?.length ?? 0) > 1
     const gap = (isInterchange ? stationRadius * 1.45 : stationRadius) + 5
+    const placed = anchors.get(s.id)
     out.push(
       labelRect(
         s[space],
-        anchors.get(s.id) ?? 'e',
+        placed?.anchor ?? 'e',
         s.name,
         fontSize,
-        gap,
+        gap + (placed?.lift ?? 0),
         s.label.offset,
         labelExtras(project, s),
       ),

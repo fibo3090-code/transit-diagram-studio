@@ -649,7 +649,7 @@ check('labels avoid sitting on the track', () => {
   expect(anchors.size, p.stations.filter((s) => s.name).length)
   // B and C sit mid-corridor on a horizontal line, so east/west are blocked.
   const b = p.stations[1]
-  const anchor = anchors.get(b.id)
+  const anchor = anchors.get(b.id)?.anchor
   assert(
     anchor === 'n' || anchor === 's' || anchor === 'ne' || anchor === 'nw' ||
       anchor === 'se' || anchor === 'sw',
@@ -709,7 +709,7 @@ check('the shipped map reserves label room for every badge it draws', () => {
     const gap = (isInterchange ? p.style.stationRadius * 1.45 : p.style.stationRadius) + 5
     const rect = labelRect(
       s.schematic,
-      anchors.get(s.id) ?? 'e',
+      anchors.get(s.id)?.anchor ?? 'e',
       s.name,
       fs,
       gap,
@@ -764,7 +764,7 @@ check('a pinned label keeps its anchor', () => {
   const { p } = sharedCorridorFixture()
   p.stations[0].label = { ...p.stations[0].label, anchor: 'sw', pinned: true }
   const net = buildNetwork(p)
-  expect(placeLabels(p, net, 'schematic').get(p.stations[0].id), 'sw')
+  expect(placeLabels(p, net, 'schematic').get(p.stations[0].id)?.anchor, 'sw')
 })
 
 // ---------------------------------------------------------------------------
