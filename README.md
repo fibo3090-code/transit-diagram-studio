@@ -385,3 +385,7 @@ the right call about a *solver* and the wrong call about the feature: **Tidy** i
 hill climbing rather than a mixed-integer formulation. It does land near 70%, it takes a
 fifth of a second, and it is one undo away from never having happened — which turns the
 argument against it into the reason to have it.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
