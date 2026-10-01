@@ -3,6 +3,8 @@
 Turn a pile of game map screenshots into a printable, Beck-style transit diagram.
 Everything runs on your machine: no accounts, no server, no quotas, no watermarks.
 
+![The editor with the example network open](docs/images/editor.png)
+
 ```bash
 npm install
 npm run dev      # http://localhost:3000
